@@ -1,0 +1,480 @@
+# ============================================================
+# AI 自动化工作流平台 - Phase 1 MVP
+# 启动: ./scripts/start.sh [infra|app|gateway|admin|monitoring|quality|graph|all]
+# ============================================================
+
+networks:
+  ai-workflow-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+  neo4j-data:
+  chroma-data:
+  elasticsearch-data:
+  sonarqube-data:
+  sonarqube-logs:
+  prometheus-data:
+  grafana-data:
+  postgres-data:
+  kong-data:
+
+services:
+
+  # ── 基础设施 ───────────────────────────────────────────────
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: awp-redis
+    restart: unless-stopped
+    ports: ["6379:6379"]
+    volumes: [redis-data:/data]
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: awp-postgres
+    restart: unless-stopped
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_USER: awp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-awp_secret_2024}
+      POSTGRES_DB: ai_workflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./infra/postgres/dynamic-config-schema.sql:/docker-entrypoint-initdb.d/02-dynamic-config.sql:ro
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U awp -d ai_workflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: awp-neo4j
+    restart: unless-stopped
+    ports: ["7474:7474", "7687:7687"]
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-awp_neo4j_2024}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_heap_initial__size: 256m
+      NEO4J_dbms_memory_heap_max__size: 512m
+    volumes: [neo4j-data:/data]
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  chroma:
+    image: chromadb/chroma:0.4.22
+    container_name: awp-chroma
+    restart: unless-stopped
+    ports: ["8001:8000"]
+    volumes: [chroma-data:/chroma/chroma]
+    environment:
+      CHROMA_SERVER_AUTH_CREDENTIALS_PROVIDER: chromadb.auth.token.TokenConfigServerAuthCredentialsProvider
+      CHROMA_SERVER_AUTH_PROVIDER: chromadb.auth.token.TokenAuthServerProvider
+      CHROMA_SERVER_AUTH_CREDENTIALS: ${CHROMA_TOKEN:-awp_chroma_token_2024}
+      ANONYMIZED_TELEMETRY: "false"
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/heartbeat || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  elasticsearch:
+    image: elasticsearch:8.11.1
+    container_name: awp-elasticsearch
+    restart: unless-stopped
+    ports: ["9200:9200"]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx1g"
+      cluster.name: awp-cluster
+    volumes: [elasticsearch-data:/usr/share/elasticsearch/data]
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: awp-zookeeper
+    restart: unless-stopped
+    ports: ["2181:2181"]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -q '[o]rg.apache.zookeeper.server' && exit 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: awp-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      # 允许消费者设置最长 60s 的 session timeout（与 executor 配置匹配）
+      KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS: 6000
+      KAFKA_GROUP_MAX_SESSION_TIMEOUT_MS: 60000
+    networks: [ai-workflow-net]
+    healthcheck:
+      # 内部端口检查，比 localhost:9092 可靠
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server kafka:29092 > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: awp-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports: ["8080:8080"]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: awp-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    networks: [ai-workflow-net]
+
+  # ── 应用服务 ───────────────────────────────────────────────
+
+  spec-normalizer:
+    build:
+      context: .
+      dockerfile: services/spec-normalizer/Dockerfile
+    container_name: awp-spec-normalizer
+    restart: unless-stopped
+    ports: ["3001:3001"]
+    environment:
+      PORT: 3001
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      POSTGRES_URL: postgresql://awp:${POSTGRES_PASSWORD:-awp_secret_2024}@postgres:5432/ai_workflow
+      KAFKA_BROKERS: kafka:29092
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_SPEC_MODEL: ${LLM_SPEC_MODEL:-claude-sonnet-4-20250514}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # OpenAI-compatible providers（Qwen/DeepSeek 等）通过此变量切换 base URL
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  code-generator:
+    build:
+      context: .
+      dockerfile: services/code-generator/Dockerfile
+    container_name: awp-code-generator
+    restart: unless-stopped
+    ports: ["3003:3003"]
+    environment:
+      PORT: 3003
+      NODE_ENV: production
+      KAFKA_BROKERS: kafka:29092
+      REDIS_URL: redis://redis:6379
+      POSTGRES_URL: postgresql://awp:${POSTGRES_PASSWORD:-awp_secret_2024}@postgres:5432/ai_workflow
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-20250514}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # OpenAI-compatible providers（Qwen/DeepSeek 等）通过此变量切换 base URL
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./knowledge-base:/app/knowledge-base:ro
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3003/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  executor:
+    build:
+      context: .
+      dockerfile: services/executor/Dockerfile
+    container_name: awp-executor
+    restart: unless-stopped
+    ports: ["3004:3004"]
+    environment:
+      PORT: 3004
+      NODE_ENV: production
+      KAFKA_BROKERS: kafka:29092
+      REDIS_URL: redis://redis:6379
+      POSTGRES_URL: postgresql://awp:${POSTGRES_PASSWORD:-awp_secret_2024}@postgres:5432/ai_workflow
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-20250514}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # OpenAI-compatible providers（Qwen/DeepSeek 等）通过此变量切换 base URL
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      SANDBOX_TIMEOUT_SECONDS: ${SANDBOX_TIMEOUT_SECONDS:-60}
+      CODE_GENERATOR_URL: http://code-generator:3003
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3004/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  planner-web:
+    build:
+      context: ./frontend/planner-web
+      dockerfile: Dockerfile
+    container_name: awp-planner-web
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NEXT_PUBLIC_WS_URL: ws://localhost:3001
+    depends_on:
+      spec-normalizer:
+        condition: service_healthy
+    networks: [ai-workflow-net]
+
+  # ── Phase 3: SonarQube 代码质量门禁 ───────────────────────
+  sonarqube:
+    image: sonarqube:10.3-community
+    container_name: awp-sonarqube
+    restart: unless-stopped
+    ports: ["9000:9000"]
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://postgres:5432/sonarqube
+      SONAR_JDBC_USERNAME: awp
+      SONAR_JDBC_PASSWORD: ${POSTGRES_PASSWORD:-awp_secret_2024}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-logs:/opt/sonarqube/logs
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/api/system/status | grep -q UP || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
+
+  # ── Phase 4: Prometheus 指标采集 ──────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: awp-prometheus
+    restart: unless-stopped
+    ports: ["9090:9090"]
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Phase 4: Grafana 可视化 ────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: awp-grafana
+    restart: unless-stopped
+    ports: ["3005:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-awp_grafana_2024}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus]
+    networks: [ai-workflow-net]
+
+  # ── Phase 3: 记忆服务（Consolidation 定时任务） ───────────
+  memory-service:
+    build:
+      context: ./services/memory
+      dockerfile: Dockerfile
+    container_name: awp-memory
+    restart: unless-stopped
+    environment:
+      POSTGRES_URL: postgresql://awp:${POSTGRES_PASSWORD:-awp_secret_2024}@postgres:5432/ai_workflow
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks: [ai-workflow-net]
+
+  # ── 管理后台 API ───────────────────────────────────────────
+  admin:
+    build:
+      context: ./services/admin
+      dockerfile: Dockerfile
+    container_name: awp-admin
+    restart: unless-stopped
+    ports: ["3006:3006"]
+    environment:
+      ADMIN_PORT: 3006
+      POSTGRES_URL: postgresql://awp:${POSTGRES_PASSWORD:-awp_secret_2024}@postgres:5432/ai_workflow
+      REDIS_URL: redis://redis:6379
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-awp_admin_2024}
+      NODE_ENV: production
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3006/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ── 管理后台 Web ───────────────────────────────────────────
+  admin-web:
+    build:
+      context: ./frontend/admin-web
+      dockerfile: Dockerfile
+    container_name: awp-admin-web
+    restart: unless-stopped
+    ports: ["3007:3007"]
+    environment:
+      NEXT_PUBLIC_ADMIN_API: http://localhost:3006/api/admin
+    depends_on:
+      admin:
+        condition: service_healthy
+    networks: [ai-workflow-net]
+
+  # ── Kong API 网关 ──────────────────────────────────────────
+  kong:
+    image: kong:3.9
+    container_name: awp-kong
+    restart: unless-stopped
+    ports:
+      - "8000:8000"   # HTTP proxy
+      - "8443:8443"   # HTTPS proxy
+      - "8002:8001"   # Admin API (仅开发环境，生产应关闭)
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PROXY_LISTEN: 0.0.0.0:8000, 0.0.0.0:8443 ssl
+    volumes:
+      - ./infra/kong/kong.yml:/etc/kong/kong.yml:ro
+    depends_on:
+      spec-normalizer:
+        condition: service_healthy
+      executor:
+        condition: service_healthy
+      admin:
+        condition: service_healthy
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── 检索服务（Phase 2 独立部署版） ────────────────────────
+  retrieval:
+    build:
+      context: ./services/retrieval
+      dockerfile: Dockerfile
+    container_name: awp-retrieval
+    restart: unless-stopped
+    ports: ["3008:3008"]
+    environment:
+      PORT: 3008
+      REDIS_URL: redis://redis:6379
+      NEO4J_HOST: neo4j
+      NEO4J_HTTP_PORT: 7474
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-awp_neo4j_2024}
+      KB_PATH: /app/knowledge-base/index/kb.json
+      NODE_ENV: production
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./knowledge-base:/app/knowledge-base:ro
+    networks: [ai-workflow-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3008/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

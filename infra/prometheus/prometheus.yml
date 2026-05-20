@@ -1,0 +1,34 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'awp-spec-normalizer'
+    static_configs:
+      - targets: ['spec-normalizer:3001']
+    metrics_path: /metrics
+
+  - job_name: 'awp-code-generator'
+    static_configs:
+      - targets: ['code-generator:3003']
+    metrics_path: /metrics
+
+  - job_name: 'awp-executor'
+    static_configs:
+      - targets: ['executor:3004']
+    metrics_path: /metrics
+
+  # ⚠️  kafka:9092 是 Kafka 二进制协议端口，不是 HTTP metrics 端口。
+  # Prometheus 发出的 HTTP GET 请求会被 Kafka 解析为超大消息（size=1195725856），
+  # 导致 InvalidReceiveException。若需监控 Kafka，请部署 kafka-exporter 并指向其端口。
+  # - job_name: 'kafka'
+  #   static_configs:
+  #     - targets: ['kafka-exporter:9308']   # kafka-exporter 默认端口
+  #   metrics_path: /metrics
+
+  # ⚠️  postgres:5432 是 PostgreSQL 二进制协议端口，不是 HTTP metrics 端口。
+  # 若需监控 PostgreSQL，请部署 postgres_exporter 并指向其端口。
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']   # postgres_exporter 默认端口
+  #   metrics_path: /metrics

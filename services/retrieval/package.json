@@ -1,0 +1,15 @@
+{
+  "name": "awp-retrieval",
+  "version": "1.0.0",
+  "description": "AWP 知识库检索服务（Hybrid RAG：BM25 + 向量 + 图谱）",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ioredis": "^5.3.2",
+    "dotenv": "^16.3.1"
+  }
+}

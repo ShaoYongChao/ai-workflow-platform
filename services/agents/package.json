@@ -1,0 +1,22 @@
+{
+  "name": "awp-agents",
+  "version": "1.0.0",
+  "description": "AWP 多 Agent 协作系统（BaseAgent / TaskBus / Skill / Registry）",
+  "main": "registry/agent-registry.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn --transpile-only registry/agent-registry.ts"
+  },
+  "dependencies": {
+    "pg": "^8.11.3",
+    "ioredis": "^5.3.2",
+    "kafkajs": "^2.2.4",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2",
+    "ts-node-dev": "^2.0.0"
+  },
+  "note": "此包被 code-generator / executor 等服务作为本地模块引用，不独立运行。独立部署请使用 docker-compose 中的 code-generator 服务（已集成 Agent 系统）。"
+}

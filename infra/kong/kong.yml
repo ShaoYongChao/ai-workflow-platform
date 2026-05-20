@@ -1,0 +1,127 @@
+_format_version: "3.0"
+_transform: true
+
+# ── 服务定义 ──────────────────────────────────────────────────
+
+services:
+  # 需求标准化
+  - name: spec-normalizer
+    url: http://spec-normalizer:3001
+    routes:
+      - name: spec-normalizer-api
+        paths: ["/api/spec-normalizer"]
+        strip_path: true
+      - name: spec-normalizer-ws
+        paths: ["/ws/spec"]
+        strip_path: false
+        protocols: [http, https]
+
+  # 代码生成
+  - name: code-generator
+    url: http://code-generator:3003
+    routes:
+      - name: code-generator-api
+        paths: ["/api/code-generator"]
+        strip_path: true
+
+  # 执行服务
+  - name: executor
+    url: http://executor:3004
+    routes:
+      - name: executor-api
+        paths: ["/api/executor"]
+        strip_path: true
+      - name: executor-ws
+        paths: ["/ws/tasks"]
+        strip_path: false
+        protocols: [http, https]
+
+  # 管理后台 API（需鉴权）
+  - name: admin-api
+    url: http://admin:3006
+    routes:
+      - name: admin-api-route
+        paths: ["/api/admin"]
+        strip_path: false
+
+  # 管理后台 Web
+  - name: admin-web
+    url: http://admin-web:3007
+    routes:
+      - name: admin-web-route
+        paths: ["/admin"]
+        strip_path: true
+
+  # 策划输入界面
+  - name: planner-web
+    url: http://planner-web:3000
+    routes:
+      - name: planner-web-route
+        paths: ["/"]
+        strip_path: false
+
+  # 检索服务
+  - name: retrieval
+    url: http://retrieval:3008
+    routes:
+      - name: retrieval-api
+        paths: ["/api/retrieval"]
+        strip_path: true
+
+# ── 全局插件 ──────────────────────────────────────────────────
+
+plugins:
+  # CORS
+  - name: cors
+    config:
+      origins: ["*"]
+      methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+      headers: [Content-Type, Authorization, X-Admin-Key, X-Developer-Id, X-Project-Id]
+      exposed_headers: [X-Request-Id]
+      max_age: 3600
+      credentials: true
+
+  # 请求体大小限制（10MB，代码上传）
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 10
+      size_unit: megabytes
+
+  # 全局限流（防滥用）
+  - name: rate-limiting
+    config:
+      minute: 300
+      policy: local
+      fault_tolerant: true
+      hide_client_headers: false
+
+  # 请求 ID 追踪
+  - name: correlation-id
+    config:
+      header_name: X-Request-Id
+      generator: uuid#counter
+      echo_downstream: true
+
+# ── Admin API 专用鉴权插件 ────────────────────────────────────
+
+  - name: key-auth
+    service: admin-api
+    config:
+      key_names: [X-Admin-Key]
+      hide_credentials: false
+
+# ── Admin API 更严格的限流 ────────────────────────────────────
+
+  - name: rate-limiting
+    service: admin-api
+    config:
+      minute: 60
+      policy: local
+      fault_tolerant: true
+
+# ── 消费者（Admin 鉴权用） ───────────────────────────────────
+
+consumers:
+  - username: awp-admin
+    keyauth_credentials:
+      - key: "${ADMIN_API_KEY:-awp_admin_2024}"

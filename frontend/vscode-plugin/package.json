@@ -1,0 +1,249 @@
+{
+  "name": "awp-vscode",
+  "displayName": "AWP — AI Workflow Platform",
+  "description": "AI 自动化工作流平台 VS Code 集成：预览生成代码、接受/拒绝、评分反馈、知识库浏览",
+  "version": "0.1.0",
+  "publisher": "awp",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other", "AI"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "awp-sidebar",
+          "title": "AWP 工作流",
+          "icon": "resources/awp-icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "awp-panel",
+          "title": "AWP 执行控制台",
+          "icon": "$(terminal)"
+        }
+      ]
+    },
+    "views": {
+      "awp-sidebar": [
+        {
+          "id": "awpTasksView",
+          "name": "代码生成任务",
+          "icon": "$(checklist)"
+        },
+        {
+          "id": "awpKnowledgeView",
+          "name": "知识库浏览",
+          "icon": "$(book)"
+        }
+      ],
+      "awp-panel": [
+        {
+          "id": "awpConsoleView",
+          "name": "执行控制台",
+          "type": "webview",
+          "icon": "$(terminal)"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "awp.generateCode",
+        "title": "AWP: 手动触发代码生成",
+        "icon": "$(play)"
+      },
+      {
+        "command": "awp.refreshTasks",
+        "title": "AWP: 刷新任务列表",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "awp.acceptTask",
+        "title": "AWP: 接受所有生成文件",
+        "icon": "$(check)"
+      },
+      {
+        "command": "awp.partialAccept",
+        "title": "AWP: 局部接受（选择文件）",
+        "icon": "$(diff-modified)"
+      },
+      {
+        "command": "awp.rejectTask",
+        "title": "AWP: 拒绝任务",
+        "icon": "$(close)"
+      },
+      {
+        "command": "awp.batchDiff",
+        "title": "AWP: 批量查看所有文件",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "awp.diffLangFiles",
+        "title": "AWP: 按语言查看并应用文件",
+        "icon": "$(files)"
+      },
+      {
+        "command": "awp.viewDiff",
+        "title": "AWP: 预览生成文件",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "awp.applyFile",
+        "title": "AWP: 应用文件到工作区",
+        "icon": "$(check)"
+      },
+      {
+        "command": "awp.rejectAllFiles",
+        "title": "AWP: 拒绝所有文件",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "awp.viewKBChunks",
+        "title": "AWP: 查看知识库 Chunks",
+        "icon": "$(book)"
+      },
+      {
+        "command": "awp.showTaskKBChunks",
+        "title": "AWP: 显示任务使用的知识库"
+      },
+      {
+        "command": "awp.copyTaskId",
+        "title": "AWP: 复制任务 ID"
+      },
+      {
+        "command": "awp.openTaskInBrowser",
+        "title": "AWP: 在浏览器中打开任务"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "awp.refreshTasks",
+          "when": "view == awpTasksView",
+          "group": "navigation"
+        },
+        {
+          "command": "awp.generateCode",
+          "when": "view == awpTasksView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "awp.viewDiff",
+          "when": "view == awpTasksView && viewItem == awp-file",
+          "group": "inline@1"
+        },
+        {
+          "command": "awp.applyFile",
+          "when": "view == awpTasksView && viewItem == awp-file",
+          "group": "inline@2"
+        },
+        {
+          "command": "awp.viewKBChunks",
+          "when": "view == awpTasksView && viewItem == awp-file",
+          "group": "inline@3"
+        },
+        {
+          "command": "awp.acceptTask",
+          "when": "view == awpTasksView && viewItem == awp-task-pending",
+          "group": "inline@1"
+        },
+        {
+          "command": "awp.rejectTask",
+          "when": "view == awpTasksView && viewItem == awp-task-pending",
+          "group": "inline@2"
+        },
+        {
+          "command": "awp.batchDiff",
+          "when": "view == awpTasksView && viewItem == awp-task-pending",
+          "group": "inline@3"
+        },
+        {
+          "command": "awp.acceptTask",
+          "when": "view == awpTasksView && viewItem == awp-task-manual",
+          "group": "inline@1"
+        },
+        {
+          "command": "awp.rejectTask",
+          "when": "view == awpTasksView && viewItem == awp-task-manual",
+          "group": "inline@2"
+        },
+        {
+          "command": "awp.batchDiff",
+          "when": "view == awpTasksView && viewItem == awp-task-manual",
+          "group": "inline@3"
+        },
+        {
+          "command": "awp.partialAccept",
+          "when": "view == awpTasksView && viewItem =~ /awp-task-(pending|manual)/",
+          "group": "2_review@1"
+        },
+        {
+          "command": "awp.batchDiff",
+          "when": "view == awpTasksView && viewItem =~ /awp-task-(pending|manual)/",
+          "group": "2_review@2"
+        },
+        {
+          "command": "awp.copyTaskId",
+          "when": "view == awpTasksView && viewItem =~ /awp-task-.*/",
+          "group": "1_modification"
+        },
+        {
+          "command": "awp.showTaskKBChunks",
+          "when": "view == awpTasksView && viewItem =~ /awp-task-.*/",
+          "group": "1_modification"
+        },
+        {
+          "command": "awp.openTaskInBrowser",
+          "when": "view == awpTasksView && viewItem =~ /awp-task-.*/",
+          "group": "1_modification"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AWP",
+      "properties": {
+        "awp.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3004",
+          "description": "executor 服务地址"
+        },
+        "awp.developerId": {
+          "type": "string",
+          "default": "",
+          "description": "开发者 ID（用于 Review 决策记录，留空使用系统用户名）"
+        },
+        "awp.autoRefreshInterval": {
+          "type": "number",
+          "default": 30,
+          "description": "任务列表自动刷新间隔（秒，0 表示禁用）"
+        },
+        "awp.kbPath": {
+          "type": "string",
+          "default": "",
+          "description": "知识库 kb.json 的绝对路径（留空则自动从工作区检测）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && npx vsce package --no-dependencies",
+    "build": "npm run package"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.10.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.3.2"
+  }
+}

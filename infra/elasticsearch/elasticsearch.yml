@@ -1,0 +1,7 @@
+# Elasticsearch 配置
+# docker-compose.yml 中已通过 environment 设置常用参数
+# 如需额外配置，在此文件添加并挂载到容器
+
+cluster.name: awp-cluster
+discovery.type: single-node
+xpack.security.enabled: false

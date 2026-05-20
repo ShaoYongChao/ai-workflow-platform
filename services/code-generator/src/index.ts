@@ -1,0 +1,70 @@
+import express, { Request, Response } from 'express'
+import { logger } from './utils/logger'
+import { initDB, initRedis } from './services/task-store'
+import { startConsumer, stopConsumer } from './consumers/spec-consumer'
+import { taskRouter } from './routes/tasks'
+import 'dotenv/config'
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { tenantMiddleware } = require('../../../gateway/tenant-middleware')
+
+const app = express()
+const PORT = parseInt(process.env.PORT || '3003', 10)
+
+app.use(express.json())
+
+// ── 健康检查 ────────────────────────────────────────────────
+app.get('/health', (_: Request, res: Response) => {
+  res.json({ status: 'ok', service: 'code-generator', ts: Date.now() })
+})
+
+// ── Prometheus 指标 ─────────────────────────────────────────
+app.get('/metrics', async (_, res: Response) => {
+  try {
+    const { register } = require('./metrics')
+    if (!register) return res.status(503).send('# prom-client not installed\n')
+    res.set('Content-Type', register.contentType)
+    res.end(await register.metrics())
+  } catch {
+    res.status(500).send('# metrics error\n')
+  }
+})
+
+// ── 任务 API ────────────────────────────────────────────────
+app.use('/api/v1/tasks', tenantMiddleware({ required: false }), taskRouter)
+
+// ── 启动 ────────────────────────────────────────────────────
+async function bootstrap() {
+  try {
+    // 1. 初始化存储
+    initDB()
+    logger.info('✅ PostgreSQL 连接初始化')
+
+    initRedis()
+    logger.info('✅ Redis 连接初始化')
+
+    // 2. 启动 HTTP（先起来，让健康检查可用）
+    app.listen(PORT, () => {
+      logger.info(`🚀 code-generator HTTP 服务启动，端口 ${PORT}`)
+    })
+
+    // 3. 启动 Kafka 消费者（阻塞运行）
+    await startConsumer()
+
+  } catch (err) {
+    logger.error(err, '服务启动失败')
+    process.exit(1)
+  }
+}
+
+// ── 优雅关闭 ────────────────────────────────────────────────
+async function shutdown(signal: string) {
+  logger.info({ signal }, '收到退出信号，开始优雅关闭')
+  await stopConsumer()
+  process.exit(0)
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
+
+bootstrap()

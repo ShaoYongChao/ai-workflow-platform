@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AWP 管理后台</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,sans-serif;background:#0a0c10;color:#c8cdd6}
+  input,select,textarea{font-family:inherit;outline:none}
+  input:focus,select:focus,textarea:focus{border-color:#5b8cff!important}
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-track{background:#0d1018}
+  ::-webkit-scrollbar-thumb{background:#2a3550;border-radius:3px}
+  table{width:100%;border-collapse:collapse}
+  code{font-family:monospace}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ── 配置 ────────────────────────────────────────────────────
+const API_BASE = window.__AWP_API__ || 'http://localhost:3006/api/admin';
+// 优先取 localStorage 手动设置的 Key，其次用服务端注入的 Key
+const ADMIN_KEY = localStorage.getItem('awp_admin_key') || window.__AWP_KEY__ || '';
+
+
+// PostgreSQL TEXT[] 格式 {a,b} → JS 数组
+function pgArr(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v !== 'string') return [];
+  const inner = v.replace(/^{|}$/g,'');
+  if (!inner) return [];
+  const result=[], len=inner.length;
+  let cur='', inQ=false;
+  for(let i=0;i<len;i++){
+    const c=inner[i];
+    if(c==='"'&&inner[i-1]!=='\\'){inQ=!inQ;continue}
+    if(c===','&&!inQ){result.push(cur);cur='';continue}
+    cur+=c;
+  }
+  if(cur!=='')result.push(cur);
+  return result;
+}
+
+// ── 主题 ────────────────────────────────────────────────────
+const T = {
+  bg0:'#0a0c10',bg1:'#0d1018',bg2:'#111620',bg3:'#161c28',
+  border:'#1e2430',border2:'#2a3550',
+  text1:'#e2e6ee',text2:'#c8cdd6',text3:'#8899aa',text4:'#3a4a5a',
+  blue:'#5b8cff',blueBg:'#1a2236',blueBorder:'#2a3550',
+  green:'#4ade80',greenBg:'#0f2a1f',greenBorder:'#1e4a30',
+  amber:'#f59e0b',red:'#f87171',purple:'#a78bfa',
+};
+
+// ── API ──────────────────────────────────────────────────────
+async function api(path, opts = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Developer-ID': 'admin',
+    ...(ADMIN_KEY ? {'X-Admin-Key': ADMIN_KEY} : {}),
+    ...(opts.headers || {})
+  };
+  let r;
+  try {
+    r = await fetch(API_BASE + path, { ...opts, headers });
+  } catch(e) {
+    throw new Error(`无法连接后台服务 (${API_BASE})，请确认 admin 服务已启动`);
+  }
+  const json = await r.json();
+  if (!json.success) throw new Error(json.error || '请求失败');
+  return json.data;
+}
+
+// ── 通用 UI 组件 ─────────────────────────────────────────────
+const H1 = ({children}) => <h1 style={{fontSize:20,fontWeight:700,color:T.text1,marginBottom:16}}>{children}</h1>;
+const Label = ({children}) => <div style={{fontSize:11,color:T.text4,marginBottom:4,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em'}}>{children}</div>;
+const Tag = ({children,color,style:s}) => <span style={{fontSize:10,padding:'2px 6px',borderRadius:3,background:color+'22',border:`1px solid ${color}44`,color,...s}}>{children}</span>;
+
+const Toggle = ({on,disabled,onToggle}) => (
+  <div onClick={disabled?undefined:onToggle} style={{width:32,height:18,borderRadius:9,background:on?T.green:T.bg3,border:`1px solid ${on?T.greenBorder:T.border}`,cursor:disabled?'not-allowed':'pointer',position:'relative',transition:'all 0.2s',flexShrink:0}}>
+    <div style={{width:12,height:12,borderRadius:'50%',background:'white',position:'absolute',top:2,left:on?16:2,transition:'left 0.2s'}}/>
+  </div>
+);
+
+const Btn = ({children,onClick,style:s}) => (
+  <button onClick={onClick} style={{background:T.blueBg,border:`1px solid ${T.blueBorder}`,color:T.blue,padding:'7px 16px',borderRadius:6,cursor:'pointer',fontSize:13,fontWeight:500,...s}}>{children}</button>
+);
+const SmallBtn = ({children,onClick,disabled,style:s}) => (
+  <button onClick={onClick} disabled={disabled} style={{background:T.bg3,border:`1px solid ${T.border}`,color:disabled?T.text4:T.text2,padding:'3px 9px',borderRadius:4,cursor:disabled?'not-allowed':'pointer',fontSize:11,...s}}>{children}</button>
+);
+const Card = ({title,children,style:s}) => (
+  <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:8,padding:16,...s}}>
+    <div style={{fontSize:12,fontWeight:600,color:T.text4,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:12}}>{title}</div>
+    {children}
+  </div>
+);
+const Row = ({children}) => <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>{children}</div>;
+
+const inputStyle = {width:'100%',background:T.bg0,border:`1px solid ${T.border}`,color:T.text2,padding:'7px 10px',borderRadius:5,fontSize:13,boxSizing:'border-box'};
+
+const Field = ({label,value,onChange,disabled,type,step,placeholder}) => (
+  <div>
+    <Label>{label}</Label>
+    <input value={value??''} onChange={onChange} disabled={disabled} type={type||'text'} step={step} placeholder={placeholder}
+      style={{...inputStyle,opacity:disabled?0.5:1}}/>
+  </div>
+);
+const SelectF = ({label,value,onChange,options}) => (
+  <div>
+    <Label>{label}</Label>
+    <select value={value??''} onChange={onChange} style={{...inputStyle}}>
+      {options.map(o=><option key={o} value={o}>{o||'（无）'}</option>)}
+    </select>
+  </div>
+);
+const Textarea = ({label,value,onChange,rows,mono}) => (
+  <div>
+    <Label>{label}</Label>
+    <textarea value={value??''} onChange={onChange} rows={rows||4}
+      style={{...inputStyle,fontSize:12,fontFamily:mono?'monospace':'inherit',resize:'vertical'}}/>
+  </div>
+);
+const Modal = ({title,children,onClose,wide}) => (
+  <div style={{position:'fixed',inset:0,background:'#0008',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}} onClick={e=>{if(e.target===e.currentTarget)onClose()}}>
+    <div style={{background:T.bg1,border:`1px solid ${T.border}`,borderRadius:10,padding:24,width:wide?700:480,maxHeight:'85vh',overflow:'auto'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <strong style={{color:T.text1,fontSize:15}}>{title}</strong>
+        <button onClick={onClose} style={{background:'none',border:'none',color:T.text4,cursor:'pointer',fontSize:18}}>×</button>
+      </div>
+      {children}
+    </div>
+  </div>
+);
+
+// ── 工具函数 ─────────────────────────────────────────────────
+function providerColor(t) {
+  return ({anthropic:'#ff6b35',openai:'#10a37f',deepseek:'#1a6aff',gemini:'#4285f4',qwen:'#ff6a00',zhipu:'#7b68ee',ollama:'#4ade80'})[t]||T.text4;
+}
+function catLabel(cat) {
+  return ({general:'通用配置',llm:'LLM 模型',security:'安全配置',feature_flags:'功能开关'})[cat]||cat;
+}
+
+// ── 总览 ─────────────────────────────────────────────────────
+function OverviewTab({stats}) {
+  const cards = [
+    {label:'7天新需求',value:stats?.specs_7d??'...',color:T.blue},
+    {label:'执行中',value:stats?.tasks?.running??0,color:T.amber},
+    {label:'待 Review',value:stats?.tasks?.test_pass??0,color:T.green},
+    {label:'知识库条目',value:stats?.kb?.total??'...',color:T.purple},
+    {label:'启用 Agent',value:stats?.agents?.enabled!==undefined?parseInt(stats.agents.enabled):'...',color:T.blue},
+    {label:'启用 Skill',value:stats?.skills?.enabled!==undefined?parseInt(stats.skills.enabled):'...',color:T.green},
+  ];
+  return (
+    <div>
+      <H1>系统总览</H1>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16,marginBottom:24}}>
+        {cards.map(c=>(
+          <div key={c.label} style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:8,padding:'16px 20px'}}>
+            <div style={{fontSize:28,fontWeight:700,color:c.color}}>{c.value}</div>
+            <div style={{fontSize:12,color:T.text4,marginTop:4}}>{c.label}</div>
+          </div>
+        ))}
+      </div>
+      {stats?.kb?.byLanguage&&(
+        <Card title="知识库语言分布">
+          <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+            {Object.entries(stats.kb.byLanguage).map(([lang,count])=>(
+              <Tag key={lang} color={T.blue}>{lang}: {count}</Tag>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── LLM 配置 ─────────────────────────────────────────────────
+function LLMTab() {
+  const [providers,setProviders] = useState([]);
+  const [form,setForm] = useState(null);
+  const [testing,setTesting] = useState(null);
+  const [testResult,setTestResult] = useState({});
+  const TYPES = ['anthropic','openai','deepseek','gemini','qwen','zhipu','ollama','azure','custom'];
+
+  const load = () => api('/llm-providers').then(setProviders).catch(e=>window.__showToast?.(e.message));
+  useEffect(()=>{load()},[]);
+
+  const testProvider = async (name) => {
+    setTesting(name);
+    try {
+      const r = await api('/llm/test',{method:'POST',body:JSON.stringify({providerName:name})});
+      setTestResult(p=>({...p,[name]:r}));
+    } catch(e) {
+      setTestResult(p=>({...p,[name]:{ok:false,error:e.message}}));
+    }
+    setTesting(null);
+  };
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <H1>LLM 模型配置</H1>
+        <Btn onClick={()=>setForm({provider_type:'openai',max_output_tokens:8192,context_window:128000})}>+ 添加模型</Btn>
+      </div>
+      {providers.length===0&&<div style={{color:T.text3,padding:32,textAlign:'center',background:T.bg2,borderRadius:8,border:`1px solid ${T.border}`}}>暂无 LLM 模型配置，点击右上角「+ 添加模型」</div>}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {providers.map(p=>(
+          <div key={p.name} style={{background:T.bg2,border:`1px solid ${p.is_default==='true'||p.is_default===true?T.blue:T.border}`,borderRadius:8,padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+            <div style={{flex:1}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                <strong style={{color:T.text1}}>{p.display_name}</strong>
+                <Tag color={providerColor(p.provider_type)}>{p.provider_type}</Tag>
+                {(p.is_default==='true'||p.is_default===true)&&<Tag color={T.green}>默认</Tag>}
+                {(p.enabled==='false'||p.enabled===false)&&<Tag color={T.red}>已禁用</Tag>}
+              </div>
+              <div style={{fontSize:12,color:T.text4,marginTop:4}}>{p.model_id} · 上下文 {Math.round((parseInt(p.context_window)||0)/1000)}K</div>
+              {testResult[p.name]&&(
+                <div style={{fontSize:11,marginTop:4,color:testResult[p.name].ok?T.green:T.red}}>
+                  {testResult[p.name].ok?`✓ ${testResult[p.name].latencyMs}ms — ${(testResult[p.name].content||'').slice(0,40)}`:`✗ ${testResult[p.name].error}`}
+                </div>
+              )}
+            </div>
+            <div style={{display:'flex',gap:8,flexShrink:0}}>
+              <SmallBtn onClick={()=>testProvider(p.name)} disabled={testing===p.name}>{testing===p.name?'测试中...':'测试'}</SmallBtn>
+              <SmallBtn onClick={async()=>{await api(`/llm-providers/${p.name}`,{method:'PUT',body:JSON.stringify({enabled:p.enabled==='true'||p.enabled===true?false:true})});load()}}>{(p.enabled==='true'||p.enabled===true)?'禁用':'启用'}</SmallBtn>
+              <SmallBtn onClick={()=>setForm(p)}>编辑</SmallBtn>
+            </div>
+          </div>
+        ))}
+      </div>
+      {form&&(
+        <Modal title={form.id?'编辑模型':'添加模型'} onClose={()=>setForm(null)}>
+          <LLMForm initial={form} providerTypes={TYPES} onSave={async(d)=>{
+            if(form.id) await api(`/llm-providers/${form.name}`,{method:'PUT',body:JSON.stringify(d)});
+            else await api('/llm-providers',{method:'POST',body:JSON.stringify(d)});
+            setForm(null);load();window.__showToast?.('保存成功','ok');
+          }}/>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function LLMForm({initial,providerTypes,onSave}) {
+  const [d,setD] = useState({...initial});
+  const f = k => e => setD(p=>({...p,[k]:e.target.value}));
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Row><Field label="名称(唯一)" value={d.name||''} onChange={f('name')} disabled={!!initial.id}/>
+           <Field label="显示名称" value={d.display_name||''} onChange={f('display_name')}/></Row>
+      <Row><SelectF label="Provider 类型" value={d.provider_type||''} onChange={f('provider_type')} options={providerTypes}/>
+           <Field label="Model ID" value={d.model_id||''} onChange={f('model_id')}/></Row>
+      <Field label="Base URL (可选)" value={d.base_url||''} onChange={f('base_url')}/>
+      <Row><Field label="API Key 环境变量名" value={d.api_key_env||''} onChange={f('api_key_env')} placeholder="如 OPENAI_API_KEY"/>
+           <Field label="或直接填 API Key" value={d.api_key_value||''} onChange={f('api_key_value')} type="password"/></Row>
+      <Row><Field label="上下文长度" value={d.context_window||128000} onChange={f('context_window')} type="number"/>
+           <Field label="最大输出 Token" value={d.max_output_tokens||8192} onChange={f('max_output_tokens')} type="number"/></Row>
+      <div style={{display:'flex',justifyContent:'flex-end'}}><Btn onClick={()=>onSave(d)}>保存</Btn></div>
+    </div>
+  );
+}
+
+// ── Skills ───────────────────────────────────────────────────
+function SkillsTab() {
+  const [skills,setSkills] = useState([]);
+  const [form,setForm] = useState(null);
+  const EXEC_TYPES = ['llm_prompt','builtin_fn','http_webhook','js_script'];
+  const load = () => api('/skills').then(setSkills).catch(e=>window.__showToast?.(e.message));
+  useEffect(()=>{load()},[]);
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <H1>Skill 管理</H1>
+        <Btn onClick={()=>setForm({executor_type:'llm_prompt',category:'custom',temperature:0.2,max_tokens:4096})}>+ 添加 Skill</Btn>
+      </div>
+      <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:8,overflow:'hidden'}}>
+        <table>
+          <thead>
+            <tr style={{borderBottom:`1px solid ${T.border}`,color:T.text4}}>
+              {['名称','类型','执行方式','模型','状态','操作'].map(h=>(
+                <th key={h} style={{padding:'10px 14px',textAlign:'left',fontWeight:600,fontSize:11,textTransform:'uppercase'}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {skills.length===0&&<tr><td colSpan={6} style={{padding:32,textAlign:'center',color:T.text3}}>暂无 Skill，点击右上角「+ 添加 Skill」</td></tr>}
+            {skills.map(s=>(
+              <tr key={s.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                <td style={{padding:'10px 14px'}}>
+                  <div style={{color:T.text1,fontWeight:500}}>{s.display_name}</div>
+                  <div style={{fontSize:11,color:T.text4}}>{(s.description||'').slice(0,50)}</div>
+                </td>
+                <td style={{padding:'10px 14px'}}><Tag color={T.purple}>{s.category}</Tag></td>
+                <td style={{padding:'10px 14px'}}><code style={{fontSize:11,color:T.amber}}>{s.executor_type}</code></td>
+                <td style={{padding:'10px 14px',fontSize:11,color:T.text3}}>{s.preferred_llm||'—'}</td>
+                <td style={{padding:'10px 14px'}}>
+                  <Toggle on={s.enabled==='true'||s.enabled===true} disabled={s.is_builtin==='true'||s.is_builtin===true}
+                    onToggle={async()=>{await api(`/skills/${s.id}`,{method:'PUT',body:JSON.stringify({enabled:!(s.enabled==='true'||s.enabled===true)})});load()}}/>
+                </td>
+                <td style={{padding:'10px 14px'}}>
+                  <div style={{display:'flex',gap:6}}>
+                    <SmallBtn onClick={()=>setForm(s)} disabled={s.is_builtin==='true'||s.is_builtin===true}>编辑</SmallBtn>
+                    {!(s.is_builtin==='true'||s.is_builtin===true)&&(
+                      <SmallBtn style={{color:T.red}} onClick={async()=>{if(confirm('确认删除？')){await api(`/skills/${s.id}`,{method:'DELETE'});load()}}}>删除</SmallBtn>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {form&&(
+        <Modal title={form.id?'编辑 Skill':'添加 Skill'} onClose={()=>setForm(null)} wide>
+          <SkillForm initial={form} executorTypes={EXEC_TYPES} onSave={async(d)=>{
+            if(form.id) await api(`/skills/${form.id}`,{method:'PUT',body:JSON.stringify(d)});
+            else await api('/skills',{method:'POST',body:JSON.stringify(d)});
+            setForm(null);load();window.__showToast?.('保存成功','ok');
+          }}/>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function SkillForm({initial,executorTypes,onSave}) {
+  const [d,setD] = useState({...initial});
+  const f  = k => e => setD(p=>({...p,[k]:e.target.value}));
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Row><Field label="名称(唯一)" value={d.name||''} onChange={f('name')} disabled={!!initial.id}/>
+           <Field label="显示名称" value={d.display_name||''} onChange={f('display_name')}/></Row>
+      <Field label="描述" value={d.description||''} onChange={f('description')}/>
+      <Row><SelectF label="执行方式" value={d.executor_type||'llm_prompt'} onChange={f('executor_type')} options={executorTypes}/>
+           <Field label="首选 LLM（可选）" value={d.preferred_llm||''} onChange={f('preferred_llm')} placeholder="如 claude-sonnet-4"/></Row>
+      {d.executor_type==='llm_prompt'&&<>
+        <Textarea label="System Prompt（支持 {{spec.title}} 等变量）" value={d.system_prompt||''} onChange={f('system_prompt')} rows={5}/>
+        <Textarea label="User Prompt 模板" value={d.user_prompt_template||''} onChange={f('user_prompt_template')} rows={4}/>
+        <Row><Field label="Max Tokens" value={d.max_tokens||4096} onChange={f('max_tokens')} type="number"/>
+             <Field label="Temperature" value={d.temperature||0.2} onChange={f('temperature')} type="number" step="0.05"/></Row>
+      </>}
+      {d.executor_type==='builtin_fn'&&<Field label="内置函数名（如 fileParser / staticAnalysis）" value={d.function_name||''} onChange={f('function_name')}/>}
+      {d.executor_type==='http_webhook'&&<>
+        <Field label="Webhook URL" value={d.webhook_url||''} onChange={f('webhook_url')}/>
+        <Textarea label="Headers (JSON)" value={JSON.stringify(d.webhook_headers||{})} onChange={e=>{try{setD(p=>({...p,webhook_headers:JSON.parse(e.target.value)}))}catch{}}} rows={2}/>
+      </>}
+      {d.executor_type==='js_script'&&<Textarea label="JS 脚本" value={d.script_code||''} onChange={f('script_code')} rows={8} mono/>}
+      <div style={{display:'flex',justifyContent:'flex-end'}}><Btn onClick={()=>onSave(d)}>保存</Btn></div>
+    </div>
+  );
+}
+
+// ── Agents ───────────────────────────────────────────────────
+function AgentsTab() {
+  const [agents,setAgents] = useState([]);
+  const [form,setForm] = useState(null);
+  const [skills,setSkills] = useState([]);
+  const load = () => api('/agents').then(setAgents).catch(e=>window.__showToast?.(e.message));
+  useEffect(()=>{load();api('/skills').then(setSkills).catch(()=>{})},[]);
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <H1>Agent 管理</H1>
+        <Btn onClick={()=>setForm({domain:'*',skill_names:[],max_retries:3,temperature:0.2})}>+ 添加 Agent</Btn>
+      </div>
+      {agents.length===0&&<div style={{color:T.text3,padding:32,textAlign:'center',background:T.bg2,borderRadius:8,border:`1px solid ${T.border}`}}>暂无 Agent，点击右上角「+ 添加 Agent」</div>}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {agents.map(a=>(
+          <div key={a.id} style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:8,padding:'14px 16px'}}>
+            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}>
+              <div style={{flex:1}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6,flexWrap:'wrap'}}>
+                  <strong style={{color:T.text1}}>{a.display_name}</strong>
+                  <Tag color={a.domain==='*'?T.text4:T.blue}>{a.domain}</Tag>
+                  {(a.enabled==='false'||a.enabled===false)&&<Tag color={T.red}>已禁用</Tag>}
+                  {(a.is_builtin==='true'||a.is_builtin===true)&&<Tag color={T.amber}>内置</Tag>}
+                </div>
+                <div style={{fontSize:12,color:T.text3,marginBottom:8}}>{a.description}</div>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {(pgArr(a.skill_names)).map(s=>(
+                    <Tag key={s} color={T.purple} style={{fontSize:10}}>{s}</Tag>
+                  ))}
+                </div>
+              </div>
+              <div style={{display:'flex',gap:8,marginLeft:16,alignItems:'center',flexShrink:0}}>
+                <Toggle on={a.enabled==='true'||a.enabled===true}
+                  onToggle={async()=>{await api(`/agents/${a.id}/toggle`,{method:'PATCH'});load()}}/>
+                <SmallBtn onClick={()=>setForm({...a,skill_names:pgArr(a.skill_names)})}
+                  disabled={a.is_builtin==='true'||a.is_builtin===true}>编辑</SmallBtn>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {form&&(
+        <Modal title={form.id?'编辑 Agent':'添加 Agent'} onClose={()=>setForm(null)} wide>
+          <AgentForm initial={form} availableSkills={skills} onSave={async(d)=>{
+            if(form.id) await api(`/agents/${form.id}`,{method:'PUT',body:JSON.stringify(d)});
+            else await api('/agents',{method:'POST',body:JSON.stringify(d)});
+            setForm(null);load();window.__showToast?.('保存成功','ok');
+          }}/>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function AgentForm({initial,availableSkills,onSave}) {
+  const [d,setD] = useState({...initial,skill_names:initial.skill_names||[]});
+  const f = k => e => setD(p=>({...p,[k]:e.target.value}));
+  const toggleSkill = name => setD(p=>({...p,skill_names:p.skill_names.includes(name)?p.skill_names.filter(s=>s!==name):[...p.skill_names,name]}));
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Row><Field label="名称(唯一)" value={d.name||''} onChange={f('name')} disabled={!!initial.id}/>
+           <Field label="显示名称" value={d.display_name||''} onChange={f('display_name')}/></Row>
+      <Field label="描述" value={d.description||''} onChange={f('description')}/>
+      <Row><Field label="领域 (* 或 game/customer-service/analytics/document)" value={d.domain||'*'} onChange={f('domain')}/>
+           <Field label="首选 LLM（可选）" value={d.preferred_llm||''} onChange={f('preferred_llm')}/></Row>
+      <div>
+        <Label>Skill 列表</Label>
+        <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6}}>
+          {availableSkills.filter(s=>s.enabled==='true'||s.enabled===true).map(s=>(
+            <button key={s.name} onClick={()=>toggleSkill(s.name)} style={{padding:'4px 10px',borderRadius:4,fontSize:12,cursor:'pointer',background:d.skill_names.includes(s.name)?T.blueBg:T.bg0,border:`1px solid ${d.skill_names.includes(s.name)?T.blue:T.border}`,color:d.skill_names.includes(s.name)?T.blue:T.text4}}>{s.display_name}</button>
+          ))}
+        </div>
+        {d.skill_names.length>0&&<div style={{marginTop:8,fontSize:11,color:T.text4}}>顺序：{d.skill_names.join(' → ')}</div>}
+      </div>
+      <Textarea label="System Prompt（可选）" value={d.system_prompt||''} onChange={e=>setD(p=>({...p,system_prompt:e.target.value}))} rows={4}/>
+      <div style={{display:'flex',justifyContent:'flex-end'}}><Btn onClick={()=>onSave(d)}>保存</Btn></div>
+    </div>
+  );
+}
+
+// ── 知识库 ───────────────────────────────────────────────────
+function KBTab() {
+  const [entries,setEntries] = useState([]);
+  const [total,setTotal] = useState(0);
+  const [page,setPage] = useState(1);
+  const [search,setSearch] = useState('');
+  const [form,setForm] = useState(null);
+  const [viewing,setViewing] = useState(null);
+
+  const load = useCallback(()=>{
+    const q = new URLSearchParams({page:String(page),limit:'20',...(search?{search}:{})});
+    api(`/kb?${q}`).then(r=>{setEntries(r.items);setTotal(r.total)}).catch(e=>window.__showToast?.(e.message));
+  },[page,search]);
+  useEffect(()=>{load()},[load]);
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <H1>知识库管理</H1>
+        <div style={{display:'flex',gap:8}}>
+          <input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}} placeholder="搜索标题/内容..."
+            style={{background:T.bg2,border:`1px solid ${T.border}`,color:T.text2,padding:'6px 12px',borderRadius:6,fontSize:13,width:200}}/>
+          <Btn onClick={()=>setForm({entry_type:'code',language:'go',quality_score:70})}>+ 添加条目</Btn>
+        </div>
+      </div>
+      <div style={{fontSize:12,color:T.text4,marginBottom:12}}>共 {total} 条</div>
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {entries.length===0&&total===0&&<div style={{color:T.text3,padding:32,textAlign:'center',background:T.bg2,borderRadius:8,border:`1px solid ${T.border}`}}>暂无知识库条目，点击右上角「+ 添加条目」</div>}
+        {entries.map(e=>(
+          <div key={e.id} style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:8,padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                <span style={{color:T.text1,fontWeight:500}}>{e.title}</span>
+                {e.language&&<Tag color={T.blue}>{e.language}</Tag>}
+                <Tag color={T.text4}>{e.entry_type}</Tag>
+                <span style={{fontSize:11,color:parseInt(e.quality_score)>=70?T.green:T.amber}}>质量 {e.quality_score}</span>
+              </div>
+              <div style={{fontSize:11,color:T.text4,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(e.content_preview||'').slice(0,80)}...</div>
+            </div>
+            <div style={{display:'flex',gap:6,flexShrink:0}}>
+              <SmallBtn onClick={async()=>{const full=await api(`/kb/${e.id}`);setViewing(full)}}>查看</SmallBtn>
+              <SmallBtn onClick={()=>setForm(e)}>编辑</SmallBtn>
+              <SmallBtn style={{color:T.red}} onClick={async()=>{if(confirm('确认删除？')){await api(`/kb/${e.id}`,{method:'DELETE'});load()}}}>删除</SmallBtn>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:'flex',justifyContent:'center',gap:8,marginTop:16}}>
+        {page>1&&<SmallBtn onClick={()=>setPage(p=>p-1)}>上一页</SmallBtn>}
+        <span style={{padding:'4px 8px',fontSize:12,color:T.text4}}>{page} / {Math.ceil(total/20)||1}</span>
+        {page<Math.ceil(total/20)&&<SmallBtn onClick={()=>setPage(p=>p+1)}>下一页</SmallBtn>}
+      </div>
+      {form&&(
+        <Modal title={form.id?'编辑条目':'添加知识库条目'} onClose={()=>setForm(null)} wide>
+          <KBForm initial={form} onSave={async(d)=>{
+            if(form.id) await api(`/kb/${form.id}`,{method:'PUT',body:JSON.stringify(d)});
+            else await api('/kb',{method:'POST',body:JSON.stringify(d)});
+            setForm(null);load();
+          }}/>
+        </Modal>
+      )}
+      {viewing&&(
+        <Modal title={viewing.title} onClose={()=>setViewing(null)} wide>
+          <pre style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:6,padding:16,fontSize:12,color:T.text2,overflow:'auto',maxHeight:400,whiteSpace:'pre-wrap',fontFamily:'monospace'}}>{viewing.content}</pre>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function KBForm({initial,onSave}) {
+  const [d,setD] = useState({...initial});
+  const f = k => e => setD(p=>({...p,[k]:e.target.value}));
+  const LANGS=['go','typescript','csharp','python','java','sql','markdown'];
+  const TYPES=['code','document','convention','api_spec'];
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Row><Field label="标题" value={d.title||''} onChange={f('title')}/>
+           <SelectF label="类型" value={d.entry_type||'code'} onChange={f('entry_type')} options={TYPES}/></Row>
+      <Row><SelectF label="语言" value={d.language||''} onChange={f('language')} options={['', ...LANGS]}/>
+           <Field label="文件路径（可选）" value={d.file_path||''} onChange={f('file_path')}/></Row>
+      <Field label="质量分 (0-100)" value={d.quality_score||70} onChange={f('quality_score')} type="number"/>
+      <Textarea label="内容（代码/文档/规范）" value={d.content||''} onChange={e=>setD(p=>({...p,content:e.target.value}))} rows={12} mono/>
+      <div style={{display:'flex',justifyContent:'flex-end'}}><Btn onClick={()=>onSave(d)}>保存</Btn></div>
+    </div>
+  );
+}
+
+// ── 系统设置 ─────────────────────────────────────────────────
+function SettingsTab() {
+  const [settings,setSettings] = useState([]);
+  const [editing,setEditing] = useState(null);
+  const [editVal,setEditVal] = useState('');
+  const load = () => api('/settings').then(setSettings).catch(e=>window.__showToast?.(e.message));
+  useEffect(()=>{load()},[]);
+
+  const save = async key => {
+    let value = editVal;
+    try{value=JSON.parse(editVal)}catch{}
+    await api(`/settings/${key}`,{method:'PUT',body:JSON.stringify({value})});
+    setEditing(null);load();window.__showToast?.('已保存','ok');
+  };
+
+  const byCategory = settings.reduce((acc,s)=>{
+    if(!acc[s.category])acc[s.category]=[];
+    acc[s.category].push(s);
+    return acc;
+  },{});
+
+  return (
+    <div>
+      <H1>系统设置</H1>
+      {settings.length===0&&<div style={{color:T.text3,padding:40,textAlign:'center',background:T.bg2,borderRadius:8,border:`1px solid ${T.border}`}}>暂无设置数据，请确认数据库已初始化（执行 infra/postgres/dynamic-config-schema.sql）</div>}
+      {Object.entries(byCategory).map(([cat,items])=>(
+        <Card key={cat} title={catLabel(cat)} style={{marginBottom:16}}>
+          {items.map(s=>(
+            <div key={s.key} style={{display:'flex',alignItems:'center',padding:'8px 0',borderBottom:`1px solid ${T.border}`}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,color:T.text1,fontFamily:'monospace'}}>{s.key}</div>
+                {s.description&&<div style={{fontSize:11,color:T.text4}}>{s.description}</div>}
+              </div>
+              {editing===s.key?(
+                <div style={{display:'flex',gap:6}}>
+                  <input value={editVal} onChange={e=>setEditVal(e.target.value)}
+                    style={{background:T.bg0,border:`1px solid ${T.border}`,color:T.text2,padding:'4px 8px',borderRadius:4,fontSize:12,width:180}}/>
+                  <SmallBtn style={{color:T.green}} onClick={()=>save(s.key)}>保存</SmallBtn>
+                  <SmallBtn onClick={()=>setEditing(null)}>取消</SmallBtn>
+                </div>
+              ):(
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <code style={{fontSize:12,color:T.amber,background:T.bg0,padding:'2px 6px',borderRadius:3}}>{JSON.stringify(s.value)}</code>
+                  <SmallBtn onClick={()=>{setEditing(s.key);setEditVal(typeof s.value==='string'?s.value:JSON.stringify(s.value))}}>改</SmallBtn>
+                </div>
+              )}
+            </div>
+          ))}
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ── 代码生成任务管理 ──────────────────────────────────────────
+const STATUS_LABELS = {
+  running:                {label:'执行中',    color:'#f59e0b'},
+  generated:              {label:'已生成',    color:'#5b8cff'},
+  test_pass:              {label:'待 Review', color:'#4ade80'},
+  auto_fix_1:             {label:'修复 1/3',  color:'#a78bfa'},
+  auto_fix_2:             {label:'修复 2/3',  color:'#a78bfa'},
+  auto_fix_3:             {label:'修复 3/3',  color:'#a78bfa'},
+  manual_review:          {label:'需人工审查',color:'#f59e0b'},
+  human_accepted:         {label:'已接受',    color:'#4ade80'},
+  human_rejected:         {label:'已拒绝',    color:'#f87171'},
+  human_partial_accepted: {label:'部分接受',  color:'#5b8cff'},
+  error:                  {label:'异常',      color:'#f87171'},
+  failed:                 {label:'失败',      color:'#f87171'},
+};
+const STATUS_OPTS = [
+  {value:'',label:'全部状态'},
+  {value:'running',label:'执行中'},
+  {value:'test_pass',label:'待 Review'},
+  {value:'manual_review',label:'需人工审查'},
+  {value:'human_accepted',label:'已接受'},
+  {value:'human_rejected',label:'已拒绝'},
+  {value:'human_partial_accepted',label:'部分接受'},
+  {value:'error',label:'异常'},
+  {value:'failed',label:'失败'},
+  {value:'auto_fix_1',label:'自动修复中'},
+];
+
+function StatusBadge({status}) {
+  const s = STATUS_LABELS[status]||{label:status,color:T.text4};
+  return <Tag color={s.color}>{s.label}</Tag>;
+}
+function PriorityBadge({priority}) {
+  const color = priority==='P0'?T.red:priority==='P1'?T.amber:T.text4;
+  return <Tag color={color}>{priority||'—'}</Tag>;
+}
+function fmtDuration(started, completed) {
+  if (!started) return '—';
+  const sec = Math.round(((completed?new Date(completed):new Date()) - new Date(started))/1000);
+  if (sec<60) return sec+'s';
+  return Math.floor(sec/60)+'m'+(sec%60)+'s';
+}
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+function TaskDetail({task}) {
+  const [expandFile,setExpandFile] = useState(null);
+  const files = task.generated_files||[];
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10}}>
+        {[
+          {label:'状态',  value:<StatusBadge status={task.status}/>},
+          {label:'优先级',value:<PriorityBadge priority={task.priority}/>},
+          {label:'耗时',  value:fmtDuration(task.started_at,task.completed_at)},
+          {label:'重试',  value:task.retry_count||0},
+        ].map(item=>(
+          <div key={item.label} style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:6,padding:'8px 12px'}}>
+            <div style={{fontSize:10,color:T.text4,marginBottom:4,textTransform:'uppercase'}}>{item.label}</div>
+            <div style={{color:T.text1}}>{item.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {task.total_score!=null&&(
+        <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:6,padding:'12px 16px'}}>
+          <div style={{fontSize:11,color:T.text4,marginBottom:8,textTransform:'uppercase'}}>AI 评分</div>
+          <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
+            {[
+              {label:'综合',    val:task.total_score},
+              {label:'正确性',  val:task.correctness_score},
+              {label:'测试覆盖',val:task.test_coverage},
+              {label:'代码质量',val:task.quality_score},
+              {label:'人工评分',val:task.human_score?task.human_score+'/5⭐':null},
+            ].filter(s=>s.val!=null).map(s=>(
+              <div key={s.label}>
+                <div style={{fontSize:10,color:T.text4}}>{s.label}</div>
+                <div style={{fontSize:20,fontWeight:700,color:parseInt(s.val)>=70?T.green:T.amber}}>{s.val}</div>
+              </div>
+            ))}
+          </div>
+          {task.feedback_text&&(
+            <div style={{marginTop:10,fontSize:12,color:T.text3,background:T.bg1,padding:'8px 12px',borderRadius:4}}>
+              💬 {task.feedback_text}
+            </div>
+          )}
+        </div>
+      )}
+
+      {files.length>0&&(
+        <div>
+          <div style={{fontSize:11,color:T.text4,marginBottom:8,textTransform:'uppercase',fontWeight:600}}>
+            生成文件 ({files.length} 个)
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:4}}>
+            {files.map((f,i)=>(
+              <div key={i} style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:5}}>
+                <div onClick={()=>setExpandFile(expandFile===f.path?null:f.path)}
+                  style={{display:'flex',alignItems:'center',gap:8,padding:'7px 12px',cursor:'pointer'}}>
+                  <Tag color={f.language==='go'?T.blue:f.language==='typescript'?T.green:T.purple}>{f.language||'?'}</Tag>
+                  <span style={{flex:1,fontSize:12,color:T.text2,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{f.path}</span>
+                  <Tag color={T.text4}>{f.role}</Tag>
+                  <span style={{fontSize:10,color:T.text4}}>{(f.content||'').split('\n').length} 行</span>
+                  <span style={{fontSize:10,color:T.text4}}>{expandFile===f.path?'▲':'▼'}</span>
+                </div>
+                {expandFile===f.path&&(
+                  <pre style={{margin:0,padding:'8px 12px',background:T.bg1,borderTop:`1px solid ${T.border}`,fontSize:11,color:T.text2,overflow:'auto',maxHeight:320,fontFamily:'monospace',whiteSpace:'pre-wrap'}}>
+                    {(f.content||'').slice(0,4000)}{(f.content||'').length>4000?'\n...(内容已截断)':''}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {task.error_log&&(
+        <div>
+          <div style={{fontSize:11,color:T.red,marginBottom:6,textTransform:'uppercase',fontWeight:600}}>错误日志</div>
+          <pre style={{background:'#1a0808',border:'1px solid #5a1a1a',borderRadius:5,padding:'10px 14px',fontSize:11,color:'#ff8888',fontFamily:'monospace',whiteSpace:'pre-wrap',maxHeight:200,overflow:'auto'}}>
+            {task.error_log}
+          </pre>
+        </div>
+      )}
+
+      <div style={{fontSize:11,color:T.text4,fontFamily:'monospace',borderTop:`1px solid ${T.border}`,paddingTop:10}}>
+        task: {task.id} · spec: {task.spec_id||'—'} · project: {task.project_id||'—'}
+      </div>
+    </div>
+  );
+}
+
+function TasksTab() {
+  const [tasks,setTasks]       = useState([]);
+  const [total,setTotal]       = useState(0);
+  const [page,setPage]         = useState(1);
+  const [status,setStatus]     = useState('');
+  const [search,setSearch]     = useState('');
+  const [statsMap,setStatsMap] = useState({});
+  const [detail,setDetail]     = useState(null);
+  const [loading,setLoading]   = useState(false);
+  const [selected,setSelected] = useState(new Set());
+  const [err,setErr]           = useState('');
+
+  const loadStats = () =>
+    api('/tasks/stats').then(d=>setStatsMap(d.byStatus||{})).catch(()=>{});
+
+  const load = useCallback(()=>{
+    setLoading(true); setErr('');
+    const q = new URLSearchParams({page:String(page),limit:'20',
+      ...(status?{status}:{}), ...(search?{search}:{})});
+    api(`/tasks?${q}`)
+      .then(d=>{setTasks(d.items);setTotal(d.total);setSelected(new Set());})
+      .catch(e=>setErr(e.message))
+      .finally(()=>setLoading(false));
+  },[page,status,search]);
+
+  useEffect(()=>{loadStats()},[]);
+  useEffect(()=>{load()},[load]);
+
+  const openDetail = async id=>{
+    try{setDetail(await api(`/tasks/${id}`));}catch(e){setErr(e.message);}
+  };
+  const cancelTask = async id=>{
+    try{await api(`/tasks/${id}/cancel`,{method:'POST'});load();loadStats();}catch(e){setErr(e.message);}
+  };
+  const deleteTask = async id=>{
+    if(!confirm('确认永久删除此任务及关联数据？'))return;
+    try{await api(`/tasks/${id}`,{method:'DELETE'});load();loadStats();}catch(e){setErr(e.message);}
+  };
+  const batchDelete = async delStatus=>{
+    const ids = delStatus?undefined:Array.from(selected);
+    const label = delStatus?`所有"${STATUS_LABELS[delStatus]?.label||delStatus}"任务`:`选中的 ${ids?.length} 个任务`;
+    if(!confirm(`确认永久删除${label}？此操作不可撤销。`))return;
+    try{
+      const d=await api('/tasks/batch-delete',{method:'POST',body:JSON.stringify(delStatus?{status:delStatus}:{ids})});
+      window.__showToast?.(`已删除 ${d.deleted} 个任务`,'ok');
+      load();loadStats();
+    }catch(e){setErr(e.message);}
+  };
+
+  const toggleSel = id=>setSelected(prev=>{const s=new Set(prev);s.has(id)?s.delete(id):s.add(id);return s;});
+  const allChecked = tasks.length>0&&tasks.every(t=>selected.has(t.id));
+  const toggleAll  = ()=>setSelected(allChecked?new Set():new Set(tasks.map(t=>t.id)));
+
+  const statBar = [
+    {key:'running',       label:'执行中',  color:'#f59e0b'},
+    {key:'test_pass',     label:'待Review',color:'#4ade80'},
+    {key:'manual_review', label:'需人工',  color:'#f59e0b'},
+    {key:'human_accepted',label:'已接受',  color:'#4ade80'},
+    {key:'human_rejected',label:'已拒绝',  color:'#f87171'},
+    {key:'error',         label:'异常',    color:'#f87171'},
+    {key:'failed',        label:'失败',    color:'#f87171'},
+  ];
+  const totalCount=Object.values(statsMap).reduce((s,n)=>s+(parseInt(n)||0),0);
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <H1>代码生成任务</H1>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          {selected.size>0&&(
+            <Btn onClick={()=>batchDelete()} style={{background:'#2a1010',borderColor:'#5a2020',color:T.red}}>
+              删除选中 ({selected.size})
+            </Btn>
+          )}
+          <SmallBtn onClick={()=>batchDelete('error')} style={{color:T.red}}>清理异常</SmallBtn>
+          <SmallBtn onClick={()=>batchDelete('human_rejected')} style={{color:T.red}}>清理已拒绝</SmallBtn>
+          <SmallBtn onClick={()=>{load();loadStats();}}>刷新</SmallBtn>
+        </div>
+      </div>
+
+      {/* 状态统计卡片 */}
+      <div style={{display:'grid',gridTemplateColumns:`repeat(${statBar.length+1},1fr)`,gap:8,marginBottom:16}}>
+        <div onClick={()=>{setStatus('');setPage(1);}}
+          style={{background:status===''?T.bg3:T.bg2,border:`1px solid ${status===''?T.blue:T.border}`,borderRadius:6,padding:'10px 12px',cursor:'pointer'}}>
+          <div style={{fontSize:22,fontWeight:700,color:T.text1}}>{totalCount}</div>
+          <div style={{fontSize:11,color:T.text4,marginTop:2}}>全部</div>
+        </div>
+        {statBar.map(s=>(
+          <div key={s.key} onClick={()=>{setStatus(s.key);setPage(1);}}
+            style={{background:status===s.key?T.bg3:T.bg2,border:`1px solid ${status===s.key?s.color:T.border}`,borderRadius:6,padding:'10px 12px',cursor:'pointer'}}>
+            <div style={{fontSize:22,fontWeight:700,color:s.color}}>{statsMap[s.key]||0}</div>
+            <div style={{fontSize:11,color:T.text4,marginTop:2}}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 过滤栏 */}
+      <div style={{display:'flex',gap:8,marginBottom:12,alignItems:'center'}}>
+        <input value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}} placeholder="搜索功能名称..."
+          style={{flex:1,background:T.bg2,border:`1px solid ${T.border}`,color:T.text2,padding:'7px 12px',borderRadius:6,fontSize:13}}/>
+        <select value={status} onChange={e=>{setStatus(e.target.value);setPage(1);}}
+          style={{background:T.bg2,border:`1px solid ${T.border}`,color:T.text2,padding:'7px 12px',borderRadius:6,fontSize:13}}>
+          {STATUS_OPTS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <span style={{fontSize:12,color:T.text4,whiteSpace:'nowrap'}}>共 {total} 条</span>
+      </div>
+
+      {err&&<div style={{color:T.red,fontSize:12,marginBottom:8,padding:'6px 10px',background:'#2a0808',borderRadius:4}}>⚠ {err}</div>}
+
+      {/* 任务表格 */}
+      <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:8,overflow:'hidden'}}>
+        <table>
+          <thead>
+            <tr style={{borderBottom:`1px solid ${T.border}`,color:T.text4}}>
+              <th style={{padding:'8px 12px',width:32}}>
+                <input type="checkbox" checked={allChecked} onChange={toggleAll} style={{cursor:'pointer',accentColor:T.blue}}/>
+              </th>
+              {['功能名称','状态','优先级','耗时','重试','评分','创建时间','操作'].map(h=>(
+                <th key={h} style={{padding:'8px 12px',textAlign:'left',fontWeight:600,fontSize:11,textTransform:'uppercase',letterSpacing:'0.05em'}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {loading&&<tr><td colSpan={9} style={{padding:32,textAlign:'center',color:T.text4}}>加载中...</td></tr>}
+            {!loading&&tasks.length===0&&<tr><td colSpan={9} style={{padding:32,textAlign:'center',color:T.text4}}>暂无任务记录</td></tr>}
+            {tasks.map(t=>(
+              <tr key={t.id} style={{borderBottom:`1px solid ${T.border}`,background:selected.has(t.id)?T.bg3:'transparent'}}>
+                <td style={{padding:'8px 12px'}}>
+                  <input type="checkbox" checked={selected.has(t.id)} onChange={()=>toggleSel(t.id)} style={{cursor:'pointer',accentColor:T.blue}}/>
+                </td>
+                <td style={{padding:'8px 12px',maxWidth:200}}>
+                  <div style={{color:T.text1,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                    {t.spec_title||<span style={{color:T.text4}}>(无标题)</span>}
+                  </div>
+                  <div style={{fontSize:10,color:T.text4,fontFamily:'monospace',marginTop:2}}>{t.id.slice(0,8)}…</div>
+                </td>
+                <td style={{padding:'8px 12px'}}><StatusBadge status={t.status}/></td>
+                <td style={{padding:'8px 12px'}}><PriorityBadge priority={t.priority}/></td>
+                <td style={{padding:'8px 12px',color:T.text3,fontSize:12}}>{fmtDuration(t.started_at,t.completed_at)}</td>
+                <td style={{padding:'8px 12px'}}>
+                  {parseInt(t.retry_count)>0?<Tag color={T.purple}>{t.retry_count}次</Tag>:<span style={{color:T.text4}}>—</span>}
+                </td>
+                <td style={{padding:'8px 12px'}}>
+                  {t.total_score!=null
+                    ?<span style={{color:parseInt(t.total_score)>=70?T.green:T.amber,fontWeight:600}}>{t.total_score}</span>
+                    :<span style={{color:T.text4}}>—</span>}
+                </td>
+                <td style={{padding:'8px 12px',color:T.text3,fontSize:11}}>{fmtTime(t.created_at)}</td>
+                <td style={{padding:'8px 12px'}}>
+                  <div style={{display:'flex',gap:4}}>
+                    <SmallBtn onClick={()=>openDetail(t.id)}>详情</SmallBtn>
+                    {['running','generated','auto_fix_1','auto_fix_2','auto_fix_3'].includes(t.status)&&(
+                      <SmallBtn onClick={()=>cancelTask(t.id)} style={{color:T.amber}}>取消</SmallBtn>
+                    )}
+                    <SmallBtn onClick={()=>deleteTask(t.id)} style={{color:T.red}}>删除</SmallBtn>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 分页 */}
+      {total>20&&(
+        <div style={{display:'flex',justifyContent:'center',alignItems:'center',gap:8,marginTop:12}}>
+          <SmallBtn onClick={()=>setPage(p=>p-1)} disabled={page<=1}>上一页</SmallBtn>
+          <span style={{fontSize:12,color:T.text4}}>{page} / {Math.ceil(total/20)}</span>
+          <SmallBtn onClick={()=>setPage(p=>p+1)} disabled={page>=Math.ceil(total/20)}>下一页</SmallBtn>
+        </div>
+      )}
+
+      {detail&&(
+        <Modal title={`任务详情 — ${detail.spec_title||detail.id.slice(0,8)}`} onClose={()=>setDetail(null)} wide>
+          <TaskDetail task={detail}/>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── 主应用 ───────────────────────────────────────────────────
+const NAV = [
+  {key:'overview',label:'总览',icon:'◈'},
+  {key:'tasks',  label:'生成任务',icon:'📋'},
+  {key:'llm',    label:'LLM 配置',icon:'⚡'},
+  {key:'skills', label:'Skills',  icon:'🔧'},
+  {key:'agents', label:'Agents',  icon:'🤖'},
+  {key:'kb',     label:'知识库',  icon:'📚'},
+  {key:'settings',label:'系统设置',icon:'⚙️'},
+];
+
+function App() {
+  const [tab,setTab] = useState('overview');
+  const [stats,setStats] = useState(null);
+  const [toast,setToast] = useState(null);  // {msg, type: 'error'|'ok'}
+
+  // 全局 toast 通知（3s 自动消失）
+  const showToast = (msg, type='error') => {
+    setToast({msg,type});
+    setTimeout(()=>setToast(null), 4000);
+  };
+  // 挂到 window 让各 Tab 调用
+  window.__showToast = showToast;
+  const [apiKey,setApiKey] = useState(localStorage.getItem('awp_admin_key')||'');
+  const [keyInput,setKeyInput] = useState('');
+  const [showKeyInput,setShowKeyInput] = useState(false);
+
+  useEffect(()=>{
+    api('/stats').then(setStats).catch(()=>{});
+  },[]);
+
+  const saveKey = () => {
+    localStorage.setItem('awp_admin_key',keyInput);
+    window.location.reload();
+  };
+
+  return (
+    <div style={{display:'flex',height:'100vh',overflow:'hidden'}}>
+      {/* 侧边栏 */}
+      <nav style={{width:200,background:T.bg1,borderRight:`1px solid ${T.border}`,display:'flex',flexDirection:'column',flexShrink:0}}>
+        <div style={{padding:'16px 20px',borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontFamily:'monospace',fontSize:12,background:T.blueBg,color:T.blue,border:`1px solid ${T.blueBorder}`,padding:'3px 8px',borderRadius:4,display:'inline-block',letterSpacing:'0.1em'}}>AWP</div>
+          <div style={{fontSize:12,color:T.text4,marginTop:6}}>管理后台</div>
+        </div>
+        {NAV.map(n=>(
+          <button key={n.key} onClick={()=>setTab(n.key)} style={{display:'flex',alignItems:'center',gap:8,padding:'10px 20px',background:tab===n.key?T.bg2:'transparent',border:'none',borderLeft:`3px solid ${tab===n.key?T.blue:'transparent'}`,color:tab===n.key?T.text1:T.text3,cursor:'pointer',textAlign:'left',fontSize:13,width:'100%'}}>
+            <span>{n.icon}</span> {n.label}
+          </button>
+        ))}
+        <div style={{marginTop:'auto',padding:'12px 20px',borderTop:`1px solid ${T.border}`}}>
+          {showKeyInput?(
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              <input value={keyInput} onChange={e=>setKeyInput(e.target.value)} placeholder="Admin Key" type="password"
+                style={{background:T.bg0,border:`1px solid ${T.border}`,color:T.text2,padding:'4px 8px',borderRadius:4,fontSize:11}}/>
+              <div style={{display:'flex',gap:4}}>
+                <SmallBtn onClick={saveKey} style={{fontSize:10,color:T.green}}>保存</SmallBtn>
+                <SmallBtn onClick={()=>setShowKeyInput(false)} style={{fontSize:10}}>取消</SmallBtn>
+              </div>
+            </div>
+          ):(
+            <SmallBtn onClick={()=>{setShowKeyInput(true);setKeyInput(apiKey)}} style={{fontSize:10,width:'100%'}}>
+              {apiKey?'修改 Admin Key':'设置 Admin Key'}
+            </SmallBtn>
+          )}
+        </div>
+      </nav>
+      {/* 主内容 */}
+      <main style={{flex:1,overflow:'auto',padding:24,background:T.bg0}}>
+        {tab==='overview'&&<OverviewTab stats={stats}/>}
+        {tab==='tasks'&&<TasksTab/>}
+        {tab==='llm'&&<LLMTab/>}
+        {tab==='skills'&&<SkillsTab/>}
+        {tab==='agents'&&<AgentsTab/>}
+        {tab==='kb'&&<KBTab/>}
+        {tab==='settings'&&<SettingsTab/>}
+      </main>
+      {toast&&(
+        <div style={{position:'fixed',bottom:24,right:24,padding:'10px 18px',borderRadius:8,
+          background:toast.type==='ok'?T.greenBg:T.bg2,
+          border:`1px solid ${toast.type==='ok'?T.greenBorder:T.red}`,
+          color:toast.type==='ok'?T.green:T.red,fontSize:13,zIndex:2000,
+          boxShadow:'0 4px 20px #0006',maxWidth:400}}>
+          {toast.type==='ok'?'✅ ':''}{toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

@@ -1,0 +1,590 @@
+{
+  "version": "1.0.0",
+  "builtAt": "2026-05-20T06:11:23.382Z",
+  "totalChunks": 40,
+  "chunks": [
+    {
+      "id": "ts:client/daily_signin/DailySignInManager.ts:interface:0",
+      "type": "interface",
+      "language": "typescript",
+      "file": "client/daily_signin/DailySignInManager.ts",
+      "content": "// ── 事件类型（解耦 UI，通过事件通知而非直接操作节点） ───────\nexport type SignInEvent =\n  | { type: 'status_loaded'; status: SignInStatus }\n  | { type: 'claim_success'; response: ClaimResponse }\n  | { type: 'claim_failed'; error: SignInError }\n  | { type: 'loading'; loading: boolean }\n\nexport type SignInEventListener = (event: SignInEvent) => void\n\n/**\n * DailySignInManager 每日签到业务逻辑管理器\n *\n * 使用方式：\n * ```ts\n * const manager = new DailySignInManager('player_001')\n * manager.on(event => { ... }) // 监听状态变化\n * await manager.init()          // 初始化，拉取状态\n * await manager.claim()         // 执行签到\n * ```\n */\nexport class DailySignInManager {\n  private playerID: string\n  private status: SignInStatus | null = null\n  private claiming = false              // 防重复点击标志\n  private listeners: SignInEventListener[] = []\n\n  constructor(playerID: string) {\n    this.playerID = playerID\n  }\n\n  // ── 事件系统 ──────────────────────────────────────────────\n\n  /** 注册事件监听器 */\n  on(listener: SignInEventListener): () => void {\n    this.listeners.push(listener)\n    // 返回取消订阅函数\n    return () => {\n      this.listeners = this.listeners.filter(l => l !== listener)\n    }\n  }\n\n  private emit(event: SignInEvent): void {\n    this.listeners.forEach(l => l(event))\n  }\n\n  // ── 公开方法 ──────────────────────────────────────────────\n\n  /**\n   * 初始化：拉取签到状态，登录后调用\n   */\n  async init(): Promise<void> {\n    this.emit({ type: 'loading', loading: true })\n    try {\n      this.status = await getSignInStatus(this.playerID)\n      this.emit({ type: 'status_loaded', status: this.status })\n    } finally {\n      this.emit({ type: 'loading', loading: false })\n    }\n  }\n\n  /**\n   * 执行签到领奖\n   * - 防重复：请求进行中时忽略重复调用\n   * - 幂等：今日已领取时触发 claim_failed(already_claimed)\n   */\n  async claim(): Promise<void> {\n    if (this.claiming) return  // 防重复点击\n    if (this.status?.claimed_today) {\n      this.emit({\n        type: 'claim_failed',\n        error: new SignInError(SignInErrorCode.ALREADY_CLAIMED, '今日签到奖励已领取')\n      })\n      return\n    }\n\n    this.claiming = true\n    this.emit({ type: 'loading', loading: true })\n\n    try {\n      const response = await claimSignIn({ player_id: this.playerID })\n\n      // 更新本地状态（乐观更新）\n      if (this.status) {\n        this.status = {\n          ...this.status,\n          claimed_today: true,\n          streak: response.streak,\n        }\n      }\n\n      this.emit({ type: 'claim_success', response })\n    } catch (err) {\n      const error = err instanceof SignInError\n        ? err\n        : new SignInError(SignInErrorCode.SERVER_ERROR, '签到失败，请稍后重试')\n      this.emit({ type: 'claim_failed', error })\n    } finally {\n      this.claiming = false\n      this.emit({ type: 'loading', loading: false })\n    }\n  }\n\n  /** 获取当前缓存状态（无需异步） */\n  getStatus(): SignInStatus | null {\n    return this.status\n  }\n\n  /** 是否可以签到 */\n  canClaim(): boolean {\n    return this.status !== null && !this.status.claimed_today && !this.claiming\n  }\n}",
+      "symbols": [
+        "UI",
+        "SignInEvent",
+        "SignInStatus",
+        "ClaimResponse",
+        "SignInError",
+        "SignInEventListener",
+        "DailySignInManager",
+        "Promise",
+        "SignInErrorCode"
+      ],
+      "semantic": "TypeScript interface: // ── 事件类型（解耦 UI，通过事件通知而非直接操作节点） ───────\nexport type SignInEvent =\n  | { type: 'status_loaded'; status: SignInStatus }\n  | { type: 'claim_success'; response: ClaimResponse }\n  | { type: 'claim_failed'; error: SignInError }\n  | { type: 'loading'; loading: boolean }\n\nexport type SignInEventListener = (event: SignInEvent) => void\n\n/**\n * DailySignInManager 每日签到业务逻辑管理器\n *\n * 使用方式：\n * ```ts\n * const manager = new DailySignInManager('player_001')\n * manager.on(event => { ... }) // 监听状态变化\n * await manager.init()          // 初始化，拉取状态\n * await manager.claim()         // 执行签到\n * ```\n */\nexport class DailySignInManager {\n  private playerID: string\n  private status: SignInStatus | null = null\n  private claiming = false              // 防重复点击标志\n  private listeners: SignInEventListener[] = []\n\n  constructor(playerID: string) {\n    this.playerID = playerID\n  }\n\n  // ── 事件系统 ──────────────────────────────────────────────\n\n  /** 注册事件监听器 */\n  on(listener: SignInEventListener): () => void {\n    this.listeners.push(listener)\n    // 返回取消订阅函数\n    return () => {\n      this.listeners = this.listeners.filter(l => l !== listener)\n    }\n  }\n\n  private emit(event: SignInEvent): void {\n    this.listeners.forEach(l => l(event))\n  }\n\n  // ── 公开方法 ──────────────────────────────────────────────\n\n  /**\n   * 初始化：拉取签到状态，登录后调用\n   */\n  async init(): Promise<void> {\n    this.emit({ type: 'loading', loading: true })\n    try {\n      this.status = await getSignInStatus(this.playerID)\n      this.emit({ type: 'status_loaded', status: this.status })\n    } finally {\n      this.emit({ type: 'loading', loading: false })\n    }\n  }\n\n  /**\n   * 执行签到领奖\n   * - 防重复：请求进行中时忽略重复调用\n   * - 幂等：今日已领取时触发 claim_failed(already_claimed)\n   */\n  async claim(): Promise<void> {\n    if (this.claiming) return  // 防重复点击\n    if (this.status?.claimed_today) {\n      this.emit({\n        type: 'claim_failed',\n        error: new SignInError(SignInErrorCode.ALREADY_CLAIMED, '今日签到奖励已领取')\n      })\n      return\n    }\n\n    this.claiming = true\n    this.emit({ type: 'loading', loading: true })\n\n    try {\n      const response = await claimSignIn({ player_id: this.playerID })\n\n      // 更新本地状态（乐观更新）\n      if (this.status) {\n        this.status = {\n          ...this.status,\n          claimed_today: true,\n          streak: response.streak,\n        }\n      }\n\n      this.emit({ type: 'claim_success', response })\n    } catch (err) {\n      const error = err instanceof SignInError\n        ? err\n        : new SignInError(SignInErrorCode.SERVER_ERROR, '签到失败，请稍后重试')\n      this.emit({ type: 'claim_failed', error })\n    } finally {\n      this.claiming = false\n      this.emit({ type: 'loading', loading: false })\n    }\n  }\n\n  /** 获取当前缓存状态（无需异步） */\n  getStatus(): SignInStatus | null {\n    return this.status\n  }\n\n  /** 是否可以签到 */\n  canClaim(): boolean {\n    return this.status !== null && !this.status.claimed_today && !this.claiming\n  }\n}"
+    },
+    {
+      "id": "ts:client/daily_signin/DailySignInManager.ts:class:0",
+      "type": "class_signature",
+      "language": "typescript",
+      "file": "client/daily_signin/DailySignInManager.ts",
+      "content": "/**\n * DailySignInManager 每日签到业务逻辑管理器\n *\n * 使用方式：\n * ```ts\n * const manager = new DailySignInManager('player_001')\n * manager.on(event => { ... }) // 监听状态变化\n * await manager.init()          // 初始化，拉取状态\n * await manager.claim()         // 执行签到\n * ```\n */\nclass DailySignInManager {\n  private playerID: string\n  private status: SignInStatus | null = null\n  private claiming = false              // 防重复点击标志\n  private listeners: SignInEventListener[] = []\n  constructor(playerID: string)\n  on(listener: SignInEventListener): () => void\n  private emit(event: SignInEvent): void\n  async init(): Promise<void>\n  async claim(): Promise<void>\n  getStatus(): SignInStatus | null\n  canClaim(): boolean\n}",
+      "symbols": [
+        "DailySignInManager",
+        "SignInStatus",
+        "SignInEventListener",
+        "SignInEvent",
+        "Promise"
+      ],
+      "semantic": "TypeScript class: /**\n * DailySignInManager 每日签到业务逻辑管理器\n *\n * 使用方式：\n * ```ts\n * const manager = new DailySignInManager('player_001')\n * manager.on(event => { ... }) // 监听状态变化\n * await manager.init()          // 初始化，拉取状态\n * await manager.claim()         // 执行签到\n * ```\n */\nclass DailySignInManager {\n  private playerID: string\n  private status: SignInStatus | null = null\n  private claiming = false              // 防重复点击标志\n  private listeners: SignInEventListener[] = []\n  constructor(playerID: string)\n  on(listener: SignInEventListener): () => void\n  private emit(event: SignInEvent): void\n  async init(): Promise<void>\n  async claim(): Promise<void>\n  getStatus(): SignInStatus | null\n  canClaim(): boolean\n}"
+    },
+    {
+      "id": "ts:client/daily_signin/api.ts:function:0",
+      "type": "function_signature",
+      "language": "typescript",
+      "file": "client/daily_signin/api.ts",
+      "content": "/**\n * 获取玩家当前签到状态\n * @param playerID 玩家 ID\n */\nexport async function getSignInStatus(playerID: string): Promise<SignInStatus>",
+      "symbols": [
+        "ID",
+        "Promise",
+        "SignInStatus"
+      ],
+      "semantic": "TypeScript function: /**\n * 获取玩家当前签到状态\n * @param playerID 玩家 ID\n */\nexport async function getSignInStatus(playerID: string): Promise<SignInStatus>"
+    },
+    {
+      "id": "ts:client/daily_signin/api.ts:function:1",
+      "type": "function_signature",
+      "language": "typescript",
+      "file": "client/daily_signin/api.ts",
+      "content": "/**\n * 执行签到领奖\n * @param req 签到请求\n * @throws {SignInError} code=already_claimed 时表示今日已领取\n */\nexport async function claimSignIn(req: ClaimRequest): Promise<ClaimResponse>",
+      "symbols": [
+        "SignInError",
+        "ClaimRequest",
+        "Promise",
+        "ClaimResponse"
+      ],
+      "semantic": "TypeScript function: /**\n * 执行签到领奖\n * @param req 签到请求\n * @throws {SignInError} code=already_claimed 时表示今日已领取\n */\nexport async function claimSignIn(req: ClaimRequest): Promise<ClaimResponse>"
+    },
+    {
+      "id": "ts:client/daily_signin/types.ts:interface:0",
+      "type": "interface",
+      "language": "typescript",
+      "file": "client/daily_signin/types.ts",
+      "content": "export interface Reward {\n  type: 'coin' | 'item' | 'chest'\n  item_id?: string\n  amount: number\n}",
+      "symbols": [
+        "Reward"
+      ],
+      "semantic": "TypeScript interface: export interface Reward {\n  type: 'coin' | 'item' | 'chest'\n  item_id?: string\n  amount: number\n}"
+    },
+    {
+      "id": "ts:client/daily_signin/types.ts:interface:1",
+      "type": "interface",
+      "language": "typescript",
+      "file": "client/daily_signin/types.ts",
+      "content": "export interface SignInStatus {\n  claimed_today: boolean\n  streak: number\n  next_reward?: Reward\n  last_sign_in: string // ISO 8601\n}",
+      "symbols": [
+        "SignInStatus",
+        "Reward",
+        "ISO"
+      ],
+      "semantic": "TypeScript interface: export interface SignInStatus {\n  claimed_today: boolean\n  streak: number\n  next_reward?: Reward\n  last_sign_in: string // ISO 8601\n}"
+    },
+    {
+      "id": "ts:client/daily_signin/types.ts:interface:2",
+      "type": "interface",
+      "language": "typescript",
+      "file": "client/daily_signin/types.ts",
+      "content": "export interface ClaimRequest {\n  player_id: string\n}",
+      "symbols": [
+        "ClaimRequest"
+      ],
+      "semantic": "TypeScript interface: export interface ClaimRequest {\n  player_id: string\n}"
+    },
+    {
+      "id": "ts:client/daily_signin/types.ts:interface:3",
+      "type": "interface",
+      "language": "typescript",
+      "file": "client/daily_signin/types.ts",
+      "content": "export interface ClaimResponse {\n  success: boolean\n  reward?: Reward\n  streak: number\n  message: string\n}",
+      "symbols": [
+        "ClaimResponse",
+        "Reward"
+      ],
+      "semantic": "TypeScript interface: export interface ClaimResponse {\n  success: boolean\n  reward?: Reward\n  streak: number\n  message: string\n}"
+    },
+    {
+      "id": "ts:client/daily_signin/types.ts:interface:4",
+      "type": "interface",
+      "language": "typescript",
+      "file": "client/daily_signin/types.ts",
+      "content": "// ── API 响应包装（与后端统一格式对齐） ──────────────────────\nexport interface ApiResponse<T> {\n  code: number\n  data?: T\n  msg: string\n}",
+      "symbols": [
+        "API",
+        "ApiResponse"
+      ],
+      "semantic": "TypeScript interface: // ── API 响应包装（与后端统一格式对齐） ──────────────────────\nexport interface ApiResponse<T> {\n  code: number\n  data?: T\n  msg: string\n}"
+    },
+    {
+      "id": "ts:client/daily_signin/types.ts:class:0",
+      "type": "class_signature",
+      "language": "typescript",
+      "file": "client/daily_signin/types.ts",
+      "content": "class SignInError {\n  constructor(\n  public readonly code: string,\n  super(message)\n}",
+      "symbols": [
+        "SignInError"
+      ],
+      "semantic": "TypeScript class: class SignInError {\n  constructor(\n  public readonly code: string,\n  super(message)\n}"
+    },
+    {
+      "id": "go:server/battle/model.go:interface:0",
+      "type": "interface",
+      "language": "go",
+      "file": "server/battle/model.go",
+      "package": "battle",
+      "content": "// ConfigRepository 配置数据访问接口\ntype ConfigRepository interface {\n  // Get 获取指定英雄配置\n  Get(ctx context.Context, heroID string) (*BattleConfig, error)\n  // Update 更新配置（自动触发热重载）\n  Update(ctx context.Context, cfg *BattleConfig) error\n  // Rollback 回滚到上一个版本\n  Rollback(ctx context.Context, heroID string) error\n}",
+      "symbols": [
+        "ConfigRepository",
+        "Get",
+        "Context",
+        "BattleConfig",
+        "Update",
+        "Rollback"
+      ],
+      "semantic": "Go interface in package battle: // ConfigRepository 配置数据访问接口\ntype ConfigRepository interface {\n  // Get 获取指定英雄配置\n  Get(ctx context.Context, heroID string) (*BattleConfig, error)\n  // Update 更新配置（自动触发热重载）\n  Update(ctx context.Context, cfg *BattleConfig) error\n  // Rollback 回滚到上一个版本\n  Rollback(ctx context.Context, heroID string) error\n}"
+    },
+    {
+      "id": "go:server/battle/model.go:interface:1",
+      "type": "interface",
+      "language": "go",
+      "file": "server/battle/model.go",
+      "package": "battle",
+      "content": "// ConfigServicer 配置业务接口\ntype ConfigServicer interface {\n  GetConfig(ctx context.Context, heroID string) (*BattleConfig, error)\n  UpdateConfig(ctx context.Context, cfg *BattleConfig) error\n  RollbackConfig(ctx context.Context, heroID string) error\n}",
+      "symbols": [
+        "ConfigServicer",
+        "GetConfig",
+        "Context",
+        "BattleConfig",
+        "UpdateConfig",
+        "RollbackConfig"
+      ],
+      "semantic": "Go interface in package battle: // ConfigServicer 配置业务接口\ntype ConfigServicer interface {\n  GetConfig(ctx context.Context, heroID string) (*BattleConfig, error)\n  UpdateConfig(ctx context.Context, cfg *BattleConfig) error\n  RollbackConfig(ctx context.Context, heroID string) error\n}"
+    },
+    {
+      "id": "go:server/battle/model.go:struct:0",
+      "type": "struct",
+      "language": "go",
+      "file": "server/battle/model.go",
+      "package": "battle",
+      "content": "// BattleConfig 战斗数值配置\ntype BattleConfig struct {\n  HeroID     string  `json:\"hero_id\"`\n  BaseHP     int     `json:\"base_hp\"`\n  BaseATK    int     `json:\"base_atk\"`\n  GrowthRate float64 `json:\"growth_rate\"`\n}",
+      "symbols": [
+        "BattleConfig",
+        "HeroID",
+        "BaseHP",
+        "BaseATK",
+        "GrowthRate"
+      ],
+      "semantic": "Go struct in package battle: // BattleConfig 战斗数值配置\ntype BattleConfig struct {\n  HeroID     string  `json:\"hero_id\"`\n  BaseHP     int     `json:\"base_hp\"`\n  BaseATK    int     `json:\"base_atk\"`\n  GrowthRate float64 `json:\"growth_rate\"`\n}"
+    },
+    {
+      "id": "go:server/battle/model.go:struct:1",
+      "type": "struct",
+      "language": "go",
+      "file": "server/battle/model.go",
+      "package": "battle",
+      "content": "type ConfigError struct {\n  Code    string\n  Message string\n}",
+      "symbols": [
+        "ConfigError",
+        "Code",
+        "Message"
+      ],
+      "semantic": "Go struct in package battle: type ConfigError struct {\n  Code    string\n  Message string\n}"
+    },
+    {
+      "id": "go:server/battle/model.go:func:0",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/battle/model.go",
+      "package": "battle",
+      "content": "func (e *ConfigError) Error() string",
+      "symbols": [
+        "ConfigError",
+        "Error"
+      ],
+      "semantic": "Go function in package battle: func (e *ConfigError) Error() string"
+    },
+    {
+      "id": "go:server/battle/model.go:error:0",
+      "type": "error_definition",
+      "language": "go",
+      "file": "server/battle/model.go",
+      "package": "battle",
+      "content": "var ErrConfigNotFound = &ConfigError{Code: \"config_not_found\", Message: \"配置不存在\"}",
+      "symbols": [
+        "ErrConfigNotFound",
+        "ConfigError",
+        "Code",
+        "Message"
+      ],
+      "semantic": "Go error definition in package battle: var ErrConfigNotFound = &ConfigError{Code: \"config_not_found\", Message: \"配置不存在\"}"
+    },
+    {
+      "id": "go:server/battle/model.go:error:1",
+      "type": "error_definition",
+      "language": "go",
+      "file": "server/battle/model.go",
+      "package": "battle",
+      "content": "var ErrValueOutOfRange = &ConfigError{Code: \"value_out_of_range\", Message: \"配置数值超出安全范围\"}",
+      "symbols": [
+        "ErrValueOutOfRange",
+        "ConfigError",
+        "Code",
+        "Message"
+      ],
+      "semantic": "Go error definition in package battle: var ErrValueOutOfRange = &ConfigError{Code: \"value_out_of_range\", Message: \"配置数值超出安全范围\"}"
+    },
+    {
+      "id": "go:server/daily_signin/handler.go:struct:0",
+      "type": "struct",
+      "language": "go",
+      "file": "server/daily_signin/handler.go",
+      "package": "daily_signin",
+      "content": "// Handler HTTP 处理层（只做参数校验和响应格式化）\ntype Handler struct {\n\tservice SignInServicer\n\tlogger  *zap.Logger\n}",
+      "symbols": [
+        "Handler",
+        "HTTP",
+        "SignInServicer",
+        "Logger"
+      ],
+      "semantic": "Go struct in package daily_signin: // Handler HTTP 处理层（只做参数校验和响应格式化）\ntype Handler struct {\n\tservice SignInServicer\n\tlogger  *zap.Logger\n}"
+    },
+    {
+      "id": "go:server/daily_signin/handler.go:struct:1",
+      "type": "struct",
+      "language": "go",
+      "file": "server/daily_signin/handler.go",
+      "package": "daily_signin",
+      "content": "type apiResponse struct {\n\tCode int         `json:\"code\"`\n\tData interface{}",
+      "symbols": [
+        "Code",
+        "Data"
+      ],
+      "semantic": "Go struct in package daily_signin: type apiResponse struct {\n\tCode int         `json:\"code\"`\n\tData interface{}"
+    },
+    {
+      "id": "go:server/daily_signin/handler.go:func:0",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/daily_signin/handler.go",
+      "package": "daily_signin",
+      "content": "// NewHandler 构造函数\nfunc NewHandler(service SignInServicer, logger *zap.Logger) *Handler",
+      "symbols": [
+        "NewHandler",
+        "SignInServicer",
+        "Logger",
+        "Handler"
+      ],
+      "semantic": "Go function in package daily_signin: // NewHandler 构造函数\nfunc NewHandler(service SignInServicer, logger *zap.Logger) *Handler"
+    },
+    {
+      "id": "go:server/daily_signin/handler.go:func:1",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/daily_signin/handler.go",
+      "package": "daily_signin",
+      "content": "// RegisterRoutes 注册路由\nfunc (h *Handler) RegisterRoutes(mux *http.ServeMux)",
+      "symbols": [
+        "RegisterRoutes",
+        "Handler",
+        "ServeMux"
+      ],
+      "semantic": "Go function in package daily_signin: // RegisterRoutes 注册路由\nfunc (h *Handler) RegisterRoutes(mux *http.ServeMux)"
+    },
+    {
+      "id": "go:server/daily_signin/handler.go:func:2",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/daily_signin/handler.go",
+      "package": "daily_signin",
+      "content": "// GetStatus GET /signin/status?player_id=xxx\nfunc (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request)",
+      "symbols": [
+        "GetStatus",
+        "GET",
+        "Handler",
+        "ResponseWriter",
+        "Request"
+      ],
+      "semantic": "Go function in package daily_signin: // GetStatus GET /signin/status?player_id=xxx\nfunc (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request)"
+    },
+    {
+      "id": "go:server/daily_signin/handler.go:func:3",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/daily_signin/handler.go",
+      "package": "daily_signin",
+      "content": "// Claim POST /signin/claim\nfunc (h *Handler) Claim(w http.ResponseWriter, r *http.Request)",
+      "symbols": [
+        "Claim",
+        "POST",
+        "Handler",
+        "ResponseWriter",
+        "Request"
+      ],
+      "semantic": "Go function in package daily_signin: // Claim POST /signin/claim\nfunc (h *Handler) Claim(w http.ResponseWriter, r *http.Request)"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:interface:0",
+      "type": "interface",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "// SignInRepository 签到数据访问接口\ntype SignInRepository interface {\n\t// GetTodayRecord 获取玩家今日签到记录，无记录返回 nil, nil\n\tGetTodayRecord(ctx context.Context, playerID string) (*SignInRecord, error)\n\n\t// GetCurrentStreak 获取玩家当前连续签到天数\n\tGetCurrentStreak(ctx context.Context, playerID string) (int, error)\n\n\t// Save 保存签到记录\n\tSave(ctx context.Context, record *SignInRecord) error\n}",
+      "symbols": [
+        "SignInRepository",
+        "GetTodayRecord",
+        "Context",
+        "SignInRecord",
+        "GetCurrentStreak",
+        "Save"
+      ],
+      "semantic": "Go interface in package daily_signin: // SignInRepository 签到数据访问接口\ntype SignInRepository interface {\n\t// GetTodayRecord 获取玩家今日签到记录，无记录返回 nil, nil\n\tGetTodayRecord(ctx context.Context, playerID string) (*SignInRecord, error)\n\n\t// GetCurrentStreak 获取玩家当前连续签到天数\n\tGetCurrentStreak(ctx context.Context, playerID string) (int, error)\n\n\t// Save 保存签到记录\n\tSave(ctx context.Context, record *SignInRecord) error\n}"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:interface:1",
+      "type": "interface",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "// SignInServicer 签到业务逻辑接口\ntype SignInServicer interface {\n\t// GetStatus 获取玩家当前签到状态\n\tGetStatus(ctx context.Context, playerID string) (*SignInStatus, error)\n\n\t// Claim 执行签到领奖，幂等：同一天重复调用返回 ErrAlreadyClaimed\n\tClaim(ctx context.Context, req ClaimRequest) (*ClaimResponse, error)\n}",
+      "symbols": [
+        "SignInServicer",
+        "GetStatus",
+        "Context",
+        "SignInStatus",
+        "Claim",
+        "ErrAlreadyClaimed",
+        "ClaimRequest",
+        "ClaimResponse"
+      ],
+      "semantic": "Go interface in package daily_signin: // SignInServicer 签到业务逻辑接口\ntype SignInServicer interface {\n\t// GetStatus 获取玩家当前签到状态\n\tGetStatus(ctx context.Context, playerID string) (*SignInStatus, error)\n\n\t// Claim 执行签到领奖，幂等：同一天重复调用返回 ErrAlreadyClaimed\n\tClaim(ctx context.Context, req ClaimRequest) (*ClaimResponse, error)\n}"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:struct:0",
+      "type": "struct",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "// SignInRecord 玩家签到记录\ntype SignInRecord struct {\n\tID         string    `json:\"id\" db:\"id\"`\n\tPlayerID   string    `json:\"player_id\" db:\"player_id\"`\n\tSignInDate time.Time `json:\"sign_in_date\" db:\"sign_in_date\"`\n\tStreak     int       `json:\"streak\" db:\"streak\"` // 连续签到天数\n\tCreatedAt  time.Time `json:\"created_at\" db:\"created_at\"`\n}",
+      "symbols": [
+        "SignInRecord",
+        "ID",
+        "PlayerID",
+        "SignInDate",
+        "Time",
+        "Streak",
+        "CreatedAt"
+      ],
+      "semantic": "Go struct in package daily_signin: // SignInRecord 玩家签到记录\ntype SignInRecord struct {\n\tID         string    `json:\"id\" db:\"id\"`\n\tPlayerID   string    `json:\"player_id\" db:\"player_id\"`\n\tSignInDate time.Time `json:\"sign_in_date\" db:\"sign_in_date\"`\n\tStreak     int       `json:\"streak\" db:\"streak\"` // 连续签到天数\n\tCreatedAt  time.Time `json:\"created_at\" db:\"created_at\"`\n}"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:struct:1",
+      "type": "struct",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "// SignInStatus 签到状态（返回给客户端）\ntype SignInStatus struct {\n\tClaimedToday bool      `json:\"claimed_today\"`\n\tStreak       int       `json:\"streak\"`\n\tNextReward   *Reward   `json:\"next_reward,omitempty\"`\n\tLastSignIn   time.Time `json:\"last_sign_in\"`\n}",
+      "symbols": [
+        "SignInStatus",
+        "ClaimedToday",
+        "Streak",
+        "NextReward",
+        "Reward",
+        "LastSignIn",
+        "Time"
+      ],
+      "semantic": "Go struct in package daily_signin: // SignInStatus 签到状态（返回给客户端）\ntype SignInStatus struct {\n\tClaimedToday bool      `json:\"claimed_today\"`\n\tStreak       int       `json:\"streak\"`\n\tNextReward   *Reward   `json:\"next_reward,omitempty\"`\n\tLastSignIn   time.Time `json:\"last_sign_in\"`\n}"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:struct:2",
+      "type": "struct",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "// Reward 奖励结构\ntype Reward struct {\n\tType   string `json:\"type\"` // \"coin\" | \"item\" | \"chest\"\n\tItemID string `json:\"item_id,omitempty\"`\n\tAmount int    `json:\"amount\"`\n}",
+      "symbols": [
+        "Reward",
+        "Type",
+        "ItemID",
+        "Amount"
+      ],
+      "semantic": "Go struct in package daily_signin: // Reward 奖励结构\ntype Reward struct {\n\tType   string `json:\"type\"` // \"coin\" | \"item\" | \"chest\"\n\tItemID string `json:\"item_id,omitempty\"`\n\tAmount int    `json:\"amount\"`\n}"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:struct:3",
+      "type": "struct",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "// ClaimRequest 领奖请求\ntype ClaimRequest struct {\n\tPlayerID string `json:\"player_id\" validate:\"required\"`\n}",
+      "symbols": [
+        "ClaimRequest",
+        "PlayerID"
+      ],
+      "semantic": "Go struct in package daily_signin: // ClaimRequest 领奖请求\ntype ClaimRequest struct {\n\tPlayerID string `json:\"player_id\" validate:\"required\"`\n}"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:struct:4",
+      "type": "struct",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "// ClaimResponse 领奖响应\ntype ClaimResponse struct {\n\tSuccess bool    `json:\"success\"`\n\tReward  *Reward `json:\"reward,omitempty\"`\n\tStreak  int     `json:\"streak\"`\n\tMessage string  `json:\"message\"`\n}",
+      "symbols": [
+        "ClaimResponse",
+        "Success",
+        "Reward",
+        "Streak",
+        "Message"
+      ],
+      "semantic": "Go struct in package daily_signin: // ClaimResponse 领奖响应\ntype ClaimResponse struct {\n\tSuccess bool    `json:\"success\"`\n\tReward  *Reward `json:\"reward,omitempty\"`\n\tStreak  int     `json:\"streak\"`\n\tMessage string  `json:\"message\"`\n}"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:struct:5",
+      "type": "struct",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "type SignInError struct {\n\tCode    string\n\tMessage string\n}",
+      "symbols": [
+        "SignInError",
+        "Code",
+        "Message"
+      ],
+      "semantic": "Go struct in package daily_signin: type SignInError struct {\n\tCode    string\n\tMessage string\n}"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:func:0",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "func (e *SignInError) Error() string",
+      "symbols": [
+        "SignInError",
+        "Error"
+      ],
+      "semantic": "Go function in package daily_signin: func (e *SignInError) Error() string"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:error:0",
+      "type": "error_definition",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "var ErrAlreadyClaimed = newSignInError(\"already_claimed\", \"今日签到奖励已领取\")",
+      "symbols": [
+        "ErrAlreadyClaimed"
+      ],
+      "semantic": "Go error definition in package daily_signin: var ErrAlreadyClaimed = newSignInError(\"already_claimed\", \"今日签到奖励已领取\")"
+    },
+    {
+      "id": "go:server/daily_signin/model.go:error:1",
+      "type": "error_definition",
+      "language": "go",
+      "file": "server/daily_signin/model.go",
+      "package": "daily_signin",
+      "content": "var ErrPlayerNotFound = newSignInError(\"player_not_found\", \"玩家不存在\")",
+      "symbols": [
+        "ErrPlayerNotFound"
+      ],
+      "semantic": "Go error definition in package daily_signin: var ErrPlayerNotFound = newSignInError(\"player_not_found\", \"玩家不存在\")"
+    },
+    {
+      "id": "go:server/daily_signin/service.go:interface:0",
+      "type": "interface",
+      "language": "go",
+      "file": "server/daily_signin/service.go",
+      "package": "daily_signin",
+      "content": "// RewardServicer 奖励发放接口（跨模块依赖注入）\ntype RewardServicer interface {\n\tGrant(ctx context.Context, playerID string, reward Reward) error\n}",
+      "symbols": [
+        "RewardServicer",
+        "Grant",
+        "Context",
+        "Reward"
+      ],
+      "semantic": "Go interface in package daily_signin: // RewardServicer 奖励发放接口（跨模块依赖注入）\ntype RewardServicer interface {\n\tGrant(ctx context.Context, playerID string, reward Reward) error\n}"
+    },
+    {
+      "id": "go:server/daily_signin/service.go:struct:0",
+      "type": "struct",
+      "language": "go",
+      "file": "server/daily_signin/service.go",
+      "package": "daily_signin",
+      "content": "// SignInService 签到业务逻辑实现\ntype SignInService struct {\n\trepo   SignInRepository\n\treward RewardServicer // 依赖注入，不直接调用具体实现\n\tlogger *zap.Logger\n}",
+      "symbols": [
+        "SignInService",
+        "SignInRepository",
+        "RewardServicer",
+        "Logger"
+      ],
+      "semantic": "Go struct in package daily_signin: // SignInService 签到业务逻辑实现\ntype SignInService struct {\n\trepo   SignInRepository\n\treward RewardServicer // 依赖注入，不直接调用具体实现\n\tlogger *zap.Logger\n}"
+    },
+    {
+      "id": "go:server/daily_signin/service.go:func:0",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/daily_signin/service.go",
+      "package": "daily_signin",
+      "content": "// NewSignInService 构造函数（依赖注入）\nfunc NewSignInService(repo SignInRepository, reward RewardServicer, logger *zap.Logger) *SignInService",
+      "symbols": [
+        "NewSignInService",
+        "SignInRepository",
+        "RewardServicer",
+        "Logger",
+        "SignInService"
+      ],
+      "semantic": "Go function in package daily_signin: // NewSignInService 构造函数（依赖注入）\nfunc NewSignInService(repo SignInRepository, reward RewardServicer, logger *zap.Logger) *SignInService"
+    },
+    {
+      "id": "go:server/daily_signin/service.go:func:1",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/daily_signin/service.go",
+      "package": "daily_signin",
+      "content": "// GetStatus 获取玩家签到状态\nfunc (s *SignInService) GetStatus(ctx context.Context, playerID string) (*SignInStatus, error)",
+      "symbols": [
+        "GetStatus",
+        "SignInService",
+        "Context",
+        "SignInStatus"
+      ],
+      "semantic": "Go function in package daily_signin: // GetStatus 获取玩家签到状态\nfunc (s *SignInService) GetStatus(ctx context.Context, playerID string) (*SignInStatus, error)"
+    },
+    {
+      "id": "go:server/daily_signin/service.go:func:2",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/daily_signin/service.go",
+      "package": "daily_signin",
+      "content": "// Claim 执行签到领奖（幂等）\nfunc (s *SignInService) Claim(ctx context.Context, req ClaimRequest) (*ClaimResponse, error)",
+      "symbols": [
+        "Claim",
+        "SignInService",
+        "Context",
+        "ClaimRequest",
+        "ClaimResponse"
+      ],
+      "semantic": "Go function in package daily_signin: // Claim 执行签到领奖（幂等）\nfunc (s *SignInService) Claim(ctx context.Context, req ClaimRequest) (*ClaimResponse, error)"
+    },
+    {
+      "id": "go:server/daily_signin/service.go:func:3",
+      "type": "function_signature",
+      "language": "go",
+      "file": "server/daily_signin/service.go",
+      "package": "daily_signin",
+      "content": "func IsAlreadyClaimed(err error) bool",
+      "symbols": [
+        "IsAlreadyClaimed"
+      ],
+      "semantic": "Go function in package daily_signin: func IsAlreadyClaimed(err error) bool"
+    }
+  ]
+}

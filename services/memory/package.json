@@ -1,0 +1,15 @@
+{
+  "name": "awp-memory",
+  "version": "1.0.0",
+  "description": "AWP 记忆系统（Hemers 架构：会话/长期/技能/巩固）",
+  "main": "src/scheduler.js",
+  "scripts": {
+    "start": "node src/scheduler.js",
+    "dev": "node --watch src/scheduler.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ioredis": "^5.10.1",
+    "pg": "^8.20.0"
+  }
+}

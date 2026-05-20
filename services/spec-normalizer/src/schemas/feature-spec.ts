@@ -1,0 +1,1 @@
+export { validateSpec, FeatureSpecSchema } from './types'

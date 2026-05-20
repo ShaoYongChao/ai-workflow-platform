@@ -1,0 +1,14 @@
+{
+  "name": "awp-scorer",
+  "version": "1.0.0",
+  "description": "AWP 评分与进化引擎（SonarQube集成 + Prompt进化）",
+  "main": "src/evolution-engine.js",
+  "scripts": {
+    "start": "node src/evolution-engine.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.3",
+    "dotenv": "^16.3.1"
+  },
+  "note": "评分模块被 executor 服务内联调用（../../../services/scorer/src/evolution-engine），不独立部署。"
+}
