@@ -435,6 +435,55 @@ body {
 .priority-field { flex-direction: row; align-items: center; gap: 8px; }
 .priority-dot { width: 8px; height: 8px; border-radius: 50%; }
 
+/* ── Language selector ───────────────────────────────────────── */
+.language-selector {
+    padding: 16px 20px;
+    border-top: 1px solid #1e2430;
+    border-bottom: 1px dashed #1e3a3a;
+    background: #0a1515;
+    flex-shrink: 0;
+}
+.language-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #64b5f6;
+    margin-bottom: 10px;
+}
+.language-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.language-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid #1e3a3a;
+    border-radius: 6px;
+    background: #0d1515;
+    color: #64b5f6;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: 'IBM Plex Mono', monospace;
+}
+.language-btn:hover {
+    background: #122020;
+    border-color: #2a4a4a;
+}
+.language-btn.active {
+    background: #0f3a3a;
+    border-color: #2a6a6a;
+    color: #4adeaa;
+    box-shadow: 0 0 8px rgba(74, 222, 170, 0.2);
+}
+.language-warning {
+    font-size: 12px;
+    color: #fb923c;
+    margin-top: 4px;
+}
+
 /* ── Submit zone ─────────────────────────────────────────────── */
 .submit-zone { padding: 16px 20px; border-top: 1px solid #1e2430; flex-shrink: 0; }
 .submit-zone.ready { border-top-color: #1e4a30; background: #0a1a10; }

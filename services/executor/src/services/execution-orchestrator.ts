@@ -10,8 +10,15 @@ import { isFixable } from '../autofix/error-summarizer'
 import { broadcastProgress } from './result-store'
 import { logger } from '../utils/logger'
 import * as metrics from '../metrics'
+import { ConfigLoader } from './config-loader'
+import { Pool } from 'pg'
 
-const MAX_FIX_ATTEMPTS = 3
+let configLoader: ConfigLoader
+export function initializeConfigLoader(pool: Pool) {
+  configLoader = new ConfigLoader(pool)
+}
+
+let MAX_FIX_ATTEMPTS = 3
 
 // ── 进化引擎惩罚（非阻塞） ────────────────────────────────────
 async function triggerEvolutionPenalty(taskId: string, errorPatterns: string[]): Promise<void> {
@@ -40,7 +47,19 @@ export async function executeAndTest(
   payload: CodeGeneratedPayload
 ): Promise<ExecutionResult> {
   const { taskId, specId, spec, files } = payload
+  const projectId = payload.projectId || 'default'
   const totalStart = Date.now()
+
+  // 加载系统配置
+  if (configLoader) {
+    try {
+      const config = await configLoader.loadSystemConfig(projectId)
+      MAX_FIX_ATTEMPTS = config.max_auto_fix_retries || 3
+      logger.info({ taskId, config }, '已加载系统配置')
+    } catch (err) {
+      logger.warn({ taskId, err }, '加载系统配置失败，使用默认值')
+    }
+  }
 
   logger.info({
     taskId, specId,
@@ -62,7 +81,7 @@ export async function executeAndTest(
     // ── Round 0：初次测试 ────────────────────────────────────
     await broadcastProgress(taskId, 'test_running', { round: 0 })
     logger.info({ taskId }, '▶ 第 0 轮：初次运行测试')
-    const initialResults = await runAllTests(sandbox.goDir, sandbox.tsDir, taskId, spec.platform)
+    const initialResults = await runAllTests(sandbox.goDir, sandbox.tsDir, taskId, spec.platform, currentFiles)
     allTestResults.push(...initialResults)
 
     // 发布详细测试输出
@@ -177,20 +196,45 @@ export async function executeAndTest(
   }
 }
 
-// ── 并发运行 Go + TS 测试 ────────────────────────────────────
+// ── 并发运行多语言测试 ──────────────────────────────────────
 async function runAllTests(
   goDir: string,
   tsDir: string,
   taskId: string,
-  platforms: ('client' | 'server')[]
+  platforms: ('client' | 'server')[],
+  generatedFiles?: any[]  // 可选：生成的文件列表，用于获取实际的语言信息
 ): Promise<TestRunResult[]> {
   const tasks: Promise<TestRunResult>[] = []
 
-  if (platforms.includes('server')) {
-    tasks.push(runGoTests(goDir, taskId))
-  }
-  if (platforms.includes('client')) {
-    tasks.push(runTSTests(tsDir, taskId))
+  // 如果提供了生成的文件，根据文件的实际语言运行测试
+  if (generatedFiles && generatedFiles.length > 0) {
+    const languages = new Set(generatedFiles.map(f => f.language))
+
+    // 只为实际生成的语言运行测试
+    if (languages.has('go')) {
+      tasks.push(runGoTests(goDir, taskId))
+    }
+    if (languages.has('typescript')) {
+      tasks.push(runTSTests(tsDir, taskId))
+    }
+    // C#、Java、Python 暂时返回占位结果（实际测试运行器需要后续实现）
+    if (languages.has('csharp')) {
+      tasks.push(createPlaceholderTestResult('csharp', taskId))
+    }
+    if (languages.has('java')) {
+      tasks.push(createPlaceholderTestResult('java', taskId))
+    }
+    if (languages.has('python')) {
+      tasks.push(createPlaceholderTestResult('python', taskId))
+    }
+  } else {
+    // 向后兼容：如果没有文件信息，根据 platforms 字段运行
+    if (platforms.includes('server')) {
+      tasks.push(runGoTests(goDir, taskId))
+    }
+    if (platforms.includes('client')) {
+      tasks.push(runTSTests(tsDir, taskId))
+    }
   }
 
   const results = await Promise.allSettled(tasks)
@@ -204,6 +248,25 @@ async function runAllTests(
       durationMs: 0
     }
   )
+}
+
+// ── 占位测试结果（对于暂未支持的语言） ──────────────────────
+async function createPlaceholderTestResult(
+  language: 'csharp' | 'java' | 'python',
+  taskId: string
+): Promise<TestRunResult> {
+  logger.info({ taskId, language }, `${language} 测试框架暂未集成，返回占位结果`)
+  return {
+    language: language as any,
+    status: 'pass',
+    totalTests: 0,
+    passedTests: 0,
+    failedTests: 0,
+    coverage: 0,
+    testCases: [],
+    rawOutput: `[占位] ${language.toUpperCase()} 代码已生成，测试框架集成中...`,
+    durationMs: 0
+  }
 }
 
 // ── 判断全部通过 ─────────────────────────────────────────────

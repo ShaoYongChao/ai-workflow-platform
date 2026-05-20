@@ -97,6 +97,7 @@ export default function PlannerPage() {
     const [aiDeclaredComplete, setAiDeclaredComplete] = useState(false)
     const [sessions, setSessions] = useState<StoredSession[]>([])
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+    const [selectedLanguages, setSelectedLanguages] = useState<string[]>(['go', 'typescript'])
 
     // Delete-with-password modal state
     const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
@@ -357,9 +358,17 @@ export default function PlannerPage() {
 
     const submitSpec = useCallback(() => {
         if (!spec || !wsRef.current) return
+        if (selectedLanguages.length === 0) {
+            alert('请至少选择一种代码生成语言')
+            return
+        }
         setStatus('submitting')
-        wsRef.current.send(JSON.stringify({ type: 'confirm_spec', payload: spec }))
-    }, [spec])
+        const finalSpec = {
+            ...spec,
+            languages: selectedLanguages
+        }
+        wsRef.current.send(JSON.stringify({ type: 'confirm_spec', payload: finalSpec }))
+    }, [spec, selectedLanguages])
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -552,38 +561,66 @@ export default function PlannerPage() {
                     )}
 
                     {status !== 'submitted' && !isHistoryView && spec && (
-                        <div className={`submit-zone ${canSubmit ? 'ready' : 'draft'}`}>
-                            {canSubmit ? (
-                                <>
-                                    {aiDeclaredComplete
-                                        ? <p className="submit-hint ready">✅ AI 确认需求已完整（{completeness}%）</p>
-                                        : <p className="submit-hint ready">需求完整度 {completeness}%，可以提交</p>
-                                    }
-                                    <p className="submit-refine-hint">💬 左侧仍可继续完善需求</p>
-                                    <button
-                                        type="button"
-                                        className="submit-btn ready"
-                                        onClick={submitSpec}
-                                        disabled={status === 'submitting'}
-                                    >
-                                        {status === 'submitting' ? '提交中...' : '确认并开始生成代码 →'}
-                                    </button>
-                                </>
-                            ) : (
-                                <>
-                                    <p className="submit-hint draft">草稿 {completeness}%，继续和 AI 完善需求</p>
-                                    <button
-                                        type="button"
-                                        className="submit-btn draft"
-                                        onClick={submitSpec}
-                                        disabled={completeness < 30 || status === 'submitting'}
-                                        title={completeness < 30 ? '需要更多信息才能提交' : '强制提交当前草稿'}
-                                    >
-                                        强制提交草稿
-                                    </button>
-                                </>
-                            )}
-                        </div>
+                        <>
+                            <div className="language-selector">
+                                <label className="language-label">📝 选择生成语言:</label>
+                                <div className="language-buttons">
+                                    {['go', 'typescript', 'csharp', 'java', 'python'].map(lang => (
+                                        <button
+                                            key={lang}
+                                            type="button"
+                                            onClick={() => {
+                                                setSelectedLanguages(prev =>
+                                                    prev.includes(lang)
+                                                        ? prev.filter(l => l !== lang)
+                                                        : [...prev, lang]
+                                                )
+                                            }}
+                                            className={`language-btn${selectedLanguages.includes(lang) ? ' active' : ''}`}
+                                            title={`${selectedLanguages.includes(lang) ? '取消选择' : '选择'} ${lang.toUpperCase()}`}
+                                        >
+                                            {lang.toUpperCase()}
+                                        </button>
+                                    ))}
+                                </div>
+                                {selectedLanguages.length === 0 && (
+                                    <p className="language-warning">⚠️ 至少选择一种语言</p>
+                                )}
+                            </div>
+
+                            <div className={`submit-zone ${canSubmit ? 'ready' : 'draft'}`}>
+                                {canSubmit ? (
+                                    <>
+                                        {aiDeclaredComplete
+                                            ? <p className="submit-hint ready">✅ AI 确认需求已完整（{completeness}%）</p>
+                                            : <p className="submit-hint ready">需求完整度 {completeness}%，可以提交</p>
+                                        }
+                                        <p className="submit-refine-hint">💬 左侧仍可继续完善需求</p>
+                                        <button
+                                            type="button"
+                                            className="submit-btn ready"
+                                            onClick={submitSpec}
+                                            disabled={status === 'submitting' || selectedLanguages.length === 0}
+                                        >
+                                            {status === 'submitting' ? '提交中...' : '确认并开始生成代码 →'}
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <p className="submit-hint draft">草稿 {completeness}%，继续和 AI 完善需求</p>
+                                        <button
+                                            type="button"
+                                            className="submit-btn draft"
+                                            onClick={submitSpec}
+                                            disabled={completeness < 30 || status === 'submitting' || selectedLanguages.length === 0}
+                                            title={completeness < 30 ? '需要更多信息才能提交' : selectedLanguages.length === 0 ? '请选择至少一种语言' : '强制提交当前草稿'}
+                                        >
+                                            强制提交草稿
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </>
                     )}
 
                     {status === 'submitted' && (

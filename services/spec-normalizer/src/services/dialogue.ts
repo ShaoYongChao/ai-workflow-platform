@@ -5,11 +5,24 @@ import { logger } from '../utils/logger'
 import { FeatureSpec, DialogueMessage, DialogueSession } from '../schemas/types'
 import { getSpecRefinerPrompt } from '../prompts/spec-refiner'
 import { validateSpec } from '../schemas/feature-spec'
+import { getLLMProviderConfig } from './db'
 
 const MAX_CLARIFICATION_ROUNDS = 5
 
-// ── LLM 初始化 ─────────────────────────────────
-function getLLMClient() {
+// ── LLM 初始化（从数据库或环境变量） ──────────────────────
+async function getLLMClient(projectId = 'default') {
+  // 优先从数据库读取配置
+  const dbConfig = await getLLMProviderConfig(projectId)
+  if (dbConfig) {
+    const apiKey = dbConfig.api_key || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY
+    if (dbConfig.provider_type === 'anthropic' || dbConfig.provider_type === 'claude') {
+      return new Anthropic({ apiKey })
+    } else if (dbConfig.provider_type === 'openai') {
+      return new OpenAI({ apiKey, baseURL: dbConfig.api_base_url })
+    }
+  }
+
+  // 降级：使用环境变量配置
   const provider = process.env.LLM_PROVIDER || 'anthropic'
   if (provider === 'anthropic') {
     return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -68,9 +81,16 @@ export class DialogueService {
     }
   }
 
-  // ── 流式 LLM 调用（Anthropic） ─────────────────────────────
+  // ── 流式 LLM 调用（支持多个提供商） ───────────────────────
   private async streamLLMResponse() {
-    const provider = process.env.LLM_PROVIDER || 'anthropic'
+    // 优先从数据库读取LLM配置，降级到环境变量
+    const dbConfig = await getLLMProviderConfig(this.projectId)
+    const provider = dbConfig?.provider_type || process.env.LLM_PROVIDER || 'anthropic'
+    const apiKey = dbConfig?.api_key ||
+      (provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY) ||
+      ''
+    const baseURL = dbConfig?.api_base_url || process.env.OPENAI_BASE_URL
+
     const systemPrompt = getSpecRefinerPrompt()
 
     // 通知前端开始流式输出
@@ -78,8 +98,8 @@ export class DialogueService {
 
     let fullResponse = ''
 
-    if (provider === 'anthropic') {
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    if (provider === 'anthropic' || provider === 'claude') {
+      const client = new Anthropic({ apiKey })
       const stream = client.messages.stream({
         model: process.env.LLM_SPEC_MODEL || 'claude-sonnet-4-20250514',
         max_tokens: 2048,
@@ -97,12 +117,11 @@ export class DialogueService {
           this.send({ type: 'stream_chunk', text })
         }
       }
-    // } else if (provider === 'qwen') {
     } else {
-      // OpenAI-compatible fallback（Qwen / DeepSeek 等通过 OPENAI_BASE_URL 切换）
+      // OpenAI-compatible fallback（支持 OpenAI、Qwen、DeepSeek 等）
       const client = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY || '',
-        baseURL: process.env.OPENAI_BASE_URL || undefined   // 不配置则用 OpenAI 默认
+        apiKey,
+        baseURL: baseURL || undefined   // 使用从数据库或环境变量读取的 baseURL
       })
       const stream = await client.chat.completions.create({
         model: process.env.LLM_SPEC_MODEL || 'gpt-4o-mini',

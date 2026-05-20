@@ -10,6 +10,7 @@ export interface FeatureSpec {
   title:        string
   goal:         string
   platform:     ('client' | 'server')[]
+  languages:    ('go' | 'typescript' | 'csharp' | 'java' | 'python')[]  // 新增：用户选择的生成语言
   rules:        Record<string, string>
   entities:     string[]
   api_contract: Array<{ name: string; type: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' }>

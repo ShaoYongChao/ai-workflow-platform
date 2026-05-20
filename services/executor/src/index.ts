@@ -6,7 +6,9 @@ import { initDB, initRedis } from './services/result-store'
 import { startConsumer, stopConsumer } from './consumers/code-consumer'
 import { taskApiRouter, specApiRouter, initTaskAPI } from './routes/task-api'
 import { attachWebSocketServer } from './services/websocket-server'
+import { initializeConfigLoader } from './services/execution-orchestrator'
 import 'dotenv/config'
+import { Pool } from 'pg'
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { tenantMiddleware } = require('../../../gateway/tenant-middleware')
@@ -44,6 +46,11 @@ async function bootstrap() {
   try {
     initDB()
     logger.info('✅ PostgreSQL 初始化')
+
+    // 为 ConfigLoader 初始化 pool
+    const configPool = new Pool({ connectionString: process.env.POSTGRES_URL })
+    initializeConfigLoader(configPool)
+    logger.info('✅ ConfigLoader 初始化')
 
     initRedis()
     logger.info('✅ Redis 初始化')

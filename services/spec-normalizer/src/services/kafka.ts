@@ -14,12 +14,18 @@ export async function initKafka() {
 }
 
 export async function publishSpecSubmitted(specId: string, spec: FeatureSpec, projectId = 'default') {
+  // 确保 languages 字段存在（向后兼容）
+  const finalSpec = {
+    ...spec,
+    languages: spec.languages || ['go', 'typescript']
+  }
+
   await producer.send({
     topic: 'spec.submitted',
     messages: [{
       key: specId,
-      value: JSON.stringify({ specId, spec, projectId, timestamp: Date.now() })
+      value: JSON.stringify({ specId, spec: finalSpec, projectId, timestamp: Date.now() })
     }]
   })
-  logger.info({ specId, projectId, topic: 'spec.submitted' }, 'Kafka 消息已发布')
+  logger.info({ specId, projectId, languages: finalSpec.languages, topic: 'spec.submitted' }, 'Kafka 消息已发布')
 }
