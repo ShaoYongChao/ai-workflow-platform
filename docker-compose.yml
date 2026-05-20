@@ -77,7 +77,7 @@ services:
       start_period: 30s
 
   chroma:
-    image: chromadb/chroma:0.4.22
+    image: chromadb/chroma:0.5.15
     container_name: awp-chroma
     restart: unless-stopped
     ports: ["8001:8000"]
