@@ -298,6 +298,164 @@ route('DELETE', /^\/api\/admin\/agents\/(?<id>[^/]+)$/, async (req, res, params)
   ok(res, { disabled: true })
 })
 
+// ── Pipelines ────────────────────────────────────────────────
+route('GET', '/api/admin/pipelines', async (req, res) => {
+  const url    = new URL(`http://x${req.url}`)
+  const projId = url.searchParams.get('project_id') || null
+  const r = await pool.query(
+    `SELECT * FROM pipeline_definitions WHERE project_id IS NULL OR project_id=$1 ORDER BY is_default DESC, domain, name`,
+    [projId]
+  )
+  ok(res, normalize('pipeline_definitions', r.rows))
+})
+
+route('POST', '/api/admin/pipelines', async (req, res) => {
+  const b = await readBody(req)
+  if (!b.name || !b.nodes || !Array.isArray(b.nodes)) return fail(res, '缺少必填字段: name, nodes(数组)')
+
+  // 验证所有 Agent 是否存在
+  const agentNames = b.nodes.map(n => n.agentName).filter(Boolean)
+  if (agentNames.length > 0) {
+    const check = await pool.query(`SELECT name FROM agent_definitions WHERE name=ANY($1) AND enabled=true`, [agentNames])
+    const found   = check.rows.map(r => r.name)
+    const missing = agentNames.filter(a => !found.includes(a))
+    if (missing.length) return fail(res, `Agent 不存在或已禁用: ${missing.join(', ')}`)
+  }
+
+  const r = await pool.query(
+    `INSERT INTO pipeline_definitions (name,display_name,description,domain,nodes,project_id,created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [b.name, b.display_name||b.name, b.description||'', b.domain||'*', JSON.stringify(b.nodes),
+     b.project_id||null, req.headers['x-developer-id']||'admin']
+  )
+  auditLog(`pipeline.create:${b.name}`, req)
+  ok(res, normalize('pipeline_definitions', r.rows[0]))
+})
+
+route('GET', /^\/api\/admin\/pipelines\/(?<id>[^/]+)$/, async (req, res, params) => {
+  const r = await pool.query(`SELECT * FROM pipeline_definitions WHERE id=$1`, [params.id])
+  if (!r.rows.length) return fail(res, '不存在', 404)
+  ok(res, normalize('pipeline_definitions', r.rows[0]))
+})
+
+route('PUT', /^\/api\/admin\/pipelines\/(?<id>[^/]+)$/, async (req, res, params) => {
+  const b = await readBody(req)
+  const allowed = ['display_name','description','domain','nodes','enabled']
+  const sets = [], vals = []
+  let idx = 1
+
+  for (const k of allowed) {
+    if (b[k] !== undefined) {
+      sets.push(`${k}=$${idx++}`)
+      vals.push(k === 'nodes' ? JSON.stringify(b[k]) : b[k])
+    }
+  }
+
+  // 如果更新 nodes，验证 Agent
+  if (b.nodes && Array.isArray(b.nodes)) {
+    const agentNames = b.nodes.map(n => n.agentName).filter(Boolean)
+    if (agentNames.length > 0) {
+      const check = await pool.query(`SELECT name FROM agent_definitions WHERE name=ANY($1) AND enabled=true`, [agentNames])
+      const found   = check.rows.map(r => r.name)
+      const missing = agentNames.filter(a => !found.includes(a))
+      if (missing.length) return fail(res, `Agent 不存在或已禁用: ${missing.join(', ')}`)
+    }
+  }
+
+  if (!sets.length) return fail(res, '无有效字段')
+  vals.push(params.id)
+
+  const r = await pool.query(
+    `UPDATE pipeline_definitions SET ${sets.join(',')} WHERE id=$${idx} AND is_default=false RETURNING *`, vals
+  )
+  if (!r.rows.length) return fail(res, '不存在或默认流水线不可修改', 404)
+  auditLog(`pipeline.update:${params.id}`, req)
+  ok(res, normalize('pipeline_definitions', r.rows[0]))
+})
+
+route('DELETE', /^\/api\/admin\/pipelines\/(?<id>[^/]+)$/, async (req, res, params) => {
+  const r = await pool.query(
+    `UPDATE pipeline_definitions SET enabled=false WHERE id=$1 AND is_default=false RETURNING id`, [params.id]
+  )
+  if (!r.rows.length) return fail(res, '不存在或默认流水线不可删除', 404)
+  auditLog(`pipeline.delete:${params.id}`, req)
+  ok(res, { disabled: true })
+})
+
+route('POST', /^\/api\/admin\/pipelines\/(?<id>[^/]+)\/test$/, async (req, res, params) => {
+  const r = await pool.query(`SELECT * FROM pipeline_definitions WHERE id=$1`, [params.id])
+  if (!r.rows.length) return fail(res, '流水线不存在', 404)
+
+  const pipeline = r.rows[0]
+  const nodes = pipeline.nodes
+  if (!Array.isArray(nodes) || nodes.length === 0) {
+    return ok(res, { valid: false, errors: ['流水线中没有节点'] })
+  }
+
+  const errors = []
+  const warnings = []
+
+  // 检查节点配置
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]
+    if (!node.agentName) {
+      errors.push(`节点 ${i}: 缺少 agentName`)
+      continue
+    }
+
+    // 检查 Agent 是否存在
+    const agentCheck = await pool.query(
+      `SELECT id, enabled FROM agent_definitions WHERE name=$1`, [node.agentName]
+    )
+    if (!agentCheck.rows.length) {
+      errors.push(`节点 ${i}: Agent "${node.agentName}" 不存在`)
+    } else if (!agentCheck.rows[0].enabled) {
+      errors.push(`节点 ${i}: Agent "${node.agentName}" 已禁用`)
+    }
+
+    // 检查依赖
+    if (node.dependsOn && Array.isArray(node.dependsOn)) {
+      for (const dep of node.dependsOn) {
+        const depNode = nodes.find(n => n.agentName === dep)
+        if (!depNode) {
+          errors.push(`节点 ${i}: 依赖的 Agent "${dep}" 不存在于流水线中`)
+        }
+      }
+    }
+  }
+
+  // 检查循环依赖
+  const visited = new Set()
+  const rec = new Set()
+  function hasCycle(idx) {
+    visited.add(idx)
+    rec.add(idx)
+    const node = nodes[idx]
+    if (node.dependsOn && Array.isArray(node.dependsOn)) {
+      for (const dep of node.dependsOn) {
+        const depIdx = nodes.findIndex(n => n.agentName === dep)
+        if (depIdx === -1) continue
+        if (!visited.has(depIdx)) {
+          if (hasCycle(depIdx)) return true
+        } else if (rec.has(depIdx)) {
+          return true
+        }
+      }
+    }
+    rec.delete(idx)
+    return false
+  }
+  for (let i = 0; i < nodes.length; i++) {
+    if (!visited.has(i) && hasCycle(i)) {
+      errors.push('流水线存在循环依赖')
+      break
+    }
+  }
+
+  const valid = errors.length === 0
+  ok(res, { valid, errors, warnings, nodeCount: nodes.length })
+})
+
 // ── Knowledge Base ────────────────────────────────────────────
 route('GET', '/api/admin/kb', async (req, res) => {
   const url     = new URL(`http://x${req.url}`)

@@ -26,7 +26,7 @@ export class ExecutorClient {
     return this.request<{ taskId: string; status: string; files: any[] }>(`/api/v1/tasks/${taskId}/files`)
   }
 
-  // ── 提交决策 ─────────────────────────────────────────────
+  // ── 提交决策（关键操作，启用自动重试） ─────────────────
   async submitDecision(
     taskId: string,
     decision: 'accept' | 'reject' | 'partial_accept',
@@ -38,7 +38,9 @@ export class ExecutorClient {
 
     return this.request<{ success: boolean; status: string }>(`/api/v1/tasks/${taskId}/decision`, {
       method: 'POST',
-      body: { decision, developerId, ...extra }
+      body: { decision, developerId, ...extra },
+      retries: 3,     // P0: 关键操作自动重试 3 次
+      retryDelay: 500 // 指数退避的初始延迟（ms）
     })
   }
 
@@ -72,47 +74,75 @@ export class ExecutorClient {
     }
   }
 
-  // ── 通用请求 ─────────────────────────────────────────────
+  // ── 通用请求（支持自动重试） ───────────────────────────
   private request<T = any>(
     path: string,
-    opts: { method?: string; body?: any; timeout?: number } = {}
+    opts: { method?: string; body?: any; timeout?: number; retries?: number; retryDelay?: number } = {}
   ): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const url    = new URL(path, this.getBaseUrl())
-      const isHttps = url.protocol === 'https:'
-      const lib    = isHttps ? https : http
-      const body   = opts.body ? JSON.stringify(opts.body) : undefined
+    const { retries = 0, retryDelay = 500 } = opts
 
-      const req = lib.request({
-        hostname: url.hostname,
-        port:     url.port || (isHttps ? 443 : 80),
-        path:     url.pathname + url.search,
-        method:   opts.method || 'GET',
-        timeout:  opts.timeout || 10000,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {})
-        }
-      }, (res: import('http').IncomingMessage) => {
-        let raw = ''
-        res.on('data', (d: Buffer) => raw += d)
-        res.on('end', () => {
-          if ((res.statusCode || 0) >= 400) {
-            reject(new Error(`HTTP ${res.statusCode}: ${raw.slice(0, 200)}`))
-            return
-          }
-          try {
-            resolve(raw ? JSON.parse(raw) : ({} as T))
-          } catch (err) {
-            reject(new Error(`响应解析失败: ${(err as Error).message}`))
-          }
+    const doRequest = async (attempt: number): Promise<T> => {
+      try {
+        return await new Promise<T>((resolve, reject) => {
+          const url    = new URL(path, this.getBaseUrl())
+          const isHttps = url.protocol === 'https:'
+          const lib    = isHttps ? https : http
+          const body   = opts.body ? JSON.stringify(opts.body) : undefined
+
+          const req = lib.request({
+            hostname: url.hostname,
+            port:     url.port || (isHttps ? 443 : 80),
+            path:     url.pathname + url.search,
+            method:   opts.method || 'GET',
+            timeout:  opts.timeout || 10000,
+            headers: {
+              'Content-Type': 'application/json',
+              ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {})
+            }
+          }, (res: import('http').IncomingMessage) => {
+            let raw = ''
+            res.on('data', (d: Buffer) => raw += d)
+            res.on('end', () => {
+              if ((res.statusCode || 0) >= 400) {
+                const err = new Error(`HTTP ${res.statusCode}: ${raw.slice(0, 200)}`)
+                reject(err)
+                return
+              }
+              try {
+                resolve(raw ? JSON.parse(raw) : ({} as T))
+              } catch (err) {
+                reject(new Error(`响应解析失败: ${(err as Error).message}`))
+              }
+            })
+          })
+
+          req.on('error', (err) => reject(err))
+          req.on('timeout', () => {
+            req.destroy()
+            reject(new Error('请求超时'))
+          })
+          if (body) req.write(body)
+          req.end()
         })
-      })
+      } catch (err) {
+        // 重试逻辑：遇到网络错误或超时时重试
+        const errMsg = (err as Error).message
+        const isRetryable = errMsg.includes('超时') ||
+                           errMsg.includes('ECONNREFUSED') ||
+                           errMsg.includes('ECONNRESET') ||
+                           errMsg.includes('EHOSTUNREACH') ||
+                           errMsg.includes('ETIMEDOUT')
 
-      req.on('error',   reject)
-      req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')) })
-      if (body) req.write(body)
-      req.end()
-    })
+        if (isRetryable && attempt < retries) {
+          // 指数退避：delay * 2^(attempt-1)
+          const backoffMs = retryDelay * Math.pow(2, attempt - 1)
+          await new Promise(resolve => setTimeout(resolve, backoffMs))
+          return doRequest(attempt + 1)
+        }
+        throw err
+      }
+    }
+
+    return doRequest(0)
   }
 }

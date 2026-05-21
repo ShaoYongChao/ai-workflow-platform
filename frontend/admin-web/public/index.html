@@ -529,6 +529,138 @@ function KBForm({initial,onSave}) {
 }
 
 // ── 系统设置 ─────────────────────────────────────────────────
+function PipelinesTab() {
+  const [pipelines, setPipelines] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState({name:'',display_name:'',domain:'*',nodes:[]});
+
+  useEffect(() => { loadPipelines(); }, []);
+
+  async function loadPipelines() {
+    try {
+      const data = await api('/pipelines');
+      setPipelines(Array.isArray(data) ? data : []);
+    } catch(e) {
+      window.showGlobalToast(e.message, 'error');
+    }
+    setLoading(false);
+  }
+
+  async function createPipeline() {
+    if (!form.name) { window.showGlobalToast('缺少流水线名称', 'error'); return; }
+    if (!form.nodes || form.nodes.length === 0) {
+      window.showGlobalToast('流水线必须至少包含一个节点', 'error');
+      return;
+    }
+    try {
+      await api('/pipelines', {method:'POST',body:JSON.stringify(form)});
+      window.showGlobalToast('✅ 流水线已创建', 'ok');
+      setFormOpen(false);
+      setForm({name:'',display_name:'',domain:'*',nodes:[]});
+      loadPipelines();
+    } catch(e) {
+      window.showGlobalToast(e.message, 'error');
+    }
+  }
+
+  async function testPipeline(id) {
+    try {
+      const result = await api(`/pipelines/${id}/test`, {method:'POST'});
+      const msg = result.valid ? '✅ 流水线配置有效' : `❌ 验证失败: ${result.errors.join('; ')}`;
+      window.showGlobalToast(msg, result.valid ? 'ok' : 'error');
+    } catch(e) {
+      window.showGlobalToast(e.message, 'error');
+    }
+  }
+
+  async function deletePipeline(id) {
+    if (!confirm('确认删除此流水线?')) return;
+    try {
+      await api(`/pipelines/${id}`, {method:'DELETE'});
+      window.showGlobalToast('✅ 流水线已删除', 'ok');
+      loadPipelines();
+    } catch(e) {
+      window.showGlobalToast(e.message, 'error');
+    }
+  }
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+        <H1>流水线管理</H1>
+        <Btn onClick={()=>setFormOpen(!formOpen)}>
+          {formOpen ? '取消' : '➕ 新建流水线'}
+        </Btn>
+      </div>
+
+      {formOpen && (
+        <Card title="新建流水线" style={{marginBottom:24}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+            <div>
+              <Label>流水线名称 *</Label>
+              <input value={form.name} onChange={e=>setForm({...form,name:e.target.value})}
+                style={{width:'100%',background:T.bg0,border:`1px solid ${T.border}`,color:T.text2,padding:8,borderRadius:4}}
+                placeholder="my-codegen-pipeline"/>
+            </div>
+            <div>
+              <Label>显示名称</Label>
+              <input value={form.display_name} onChange={e=>setForm({...form,display_name:e.target.value})}
+                style={{width:'100%',background:T.bg0,border:`1px solid ${T.border}`,color:T.text2,padding:8,borderRadius:4}}
+                placeholder="My Codegen Pipeline"/>
+            </div>
+          </div>
+          <div style={{marginBottom:12}}>
+            <Label>域 (Domain)</Label>
+            <select value={form.domain} onChange={e=>setForm({...form,domain:e.target.value})}
+              style={{width:'100%',background:T.bg0,border:`1px solid ${T.border}`,color:T.text2,padding:8,borderRadius:4}}>
+              <option value="*">通用 (*)</option>
+              <option value="game">游戏 (game)</option>
+              <option value="customer-service">客服 (customer-service)</option>
+            </select>
+          </div>
+          <div style={{marginBottom:12}}>
+            <Label>节点配置 (JSON)</Label>
+            <textarea value={JSON.stringify(form.nodes, null, 2)} onChange={e=>{
+              try{setForm({...form,nodes:JSON.parse(e.target.value)})} catch(err){}
+            }} style={{width:'100%',height:150,background:T.bg0,border:`1px solid ${T.border}`,color:T.text2,padding:8,borderRadius:4,fontFamily:'monospace',fontSize:11}}
+              placeholder='[{"agentName":"spec-agent","dependsOn":[],"optional":false}]'/>
+          </div>
+          <Btn onClick={createPipeline} style={{background:T.greenBg,color:T.green,borderColor:T.greenBorder}}>
+            创建流水线
+          </Btn>
+        </Card>
+      )}
+
+      {loading ? (
+        <div style={{textAlign:'center',color:T.text3}}>加载中...</div>
+      ) : pipelines.length === 0 ? (
+        <div style={{textAlign:'center',color:T.text3}}>暂无流水线</div>
+      ) : (
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(400px,1fr))',gap:12}}>
+          {pipelines.map(p=>(
+            <Card key={p.id} title={p.display_name||p.name} style={{display:'flex',flexDirection:'column'}}>
+              <div style={{fontSize:12,color:T.text3,marginBottom:8}}>
+                <div>名称: <code style={{color:T.text2}}>{p.name}</code></div>
+                <div>域: <Tag color={T.blue}>{p.domain}</Tag></div>
+                <div>节点: <Tag color={p.nodes?.length?T.green:T.amber}>{p.nodes?.length||0} 个</Tag></div>
+                {p.is_default && <div style={{marginTop:4}}><Tag color={T.purple}>默认流水线</Tag></div>}
+              </div>
+              <div style={{fontSize:11,color:T.text3,marginBottom:12,maxHeight:100,overflow:'auto',background:T.bg1,padding:8,borderRadius:4,fontFamily:'monospace'}}>
+                {p.nodes?.map((n,i)=><div key={i}>• {n.agentName} {n.dependsOn?.length?`← ${n.dependsOn.join(',')}`:''}</div>)}
+              </div>
+              <div style={{display:'flex',gap:6,marginTop:'auto'}}>
+                <SmallBtn onClick={()=>testPipeline(p.id)} style={{color:T.blue,flex:1}}>🧪 测试</SmallBtn>
+                {!p.is_default && <SmallBtn onClick={()=>deletePipeline(p.id)} style={{color:T.red,flex:1}}>🗑️ 删除</SmallBtn>}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsTab() {
   const [settings,setSettings] = useState([]);
   const [editing,setEditing] = useState(null);
@@ -905,6 +1037,7 @@ const NAV = [
   {key:'llm',    label:'LLM 配置',icon:'⚡'},
   {key:'skills', label:'Skills',  icon:'🔧'},
   {key:'agents', label:'Agents',  icon:'🤖'},
+  {key:'pipelines',label:'流水线',icon:'⚙️'},
   {key:'kb',     label:'知识库',  icon:'📚'},
   {key:'settings',label:'系统设置',icon:'⚙️'},
 ];
@@ -971,6 +1104,7 @@ function App() {
         {tab==='llm'&&<LLMTab/>}
         {tab==='skills'&&<SkillsTab/>}
         {tab==='agents'&&<AgentsTab/>}
+        {tab==='pipelines'&&<PipelinesTab/>}
         {tab==='kb'&&<KBTab/>}
         {tab==='settings'&&<SettingsTab/>}
       </main>

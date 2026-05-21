@@ -192,3 +192,50 @@ CREATE TRIGGER trg_skill_def_updated BEFORE UPDATE ON skill_definitions  FOR EAC
 CREATE TRIGGER trg_agent_def_updated BEFORE UPDATE ON agent_definitions  FOR EACH ROW EXECUTE FUNCTION update_config_updated_at();
 CREATE TRIGGER trg_pipeline_updated BEFORE UPDATE ON pipeline_definitions FOR EACH ROW EXECUTE FUNCTION update_config_updated_at();
 CREATE TRIGGER trg_kb_updated       BEFORE UPDATE ON kb_entries          FOR EACH ROW EXECUTE FUNCTION update_config_updated_at();
+
+-- ── 默认流水线模板（内置） ──────────────────────────────────────
+INSERT INTO pipeline_definitions (name, display_name, description, domain, nodes, is_default, enabled, created_by)
+VALUES
+  (
+    'standard-codegen-pipeline',
+    'Standard Code Generation Pipeline',
+    'Default pipeline: spec-agent → codegen-agent → executor-agent',
+    '*',
+    '[
+      {"agentName":"spec-agent","dependsOn":[],"optional":false},
+      {"agentName":"codegen-agent","dependsOn":["spec-agent"],"optional":false},
+      {"agentName":"executor-agent","dependsOn":["codegen-agent"],"optional":false}
+    ]'::JSONB,
+    true,
+    true,
+    'system'
+  ),
+  (
+    'game-dev-pipeline',
+    'Game Development Pipeline',
+    'For game projects: spec → codegen → executor + optional analyzer',
+    'game',
+    '[
+      {"agentName":"spec-agent","dependsOn":[],"optional":false},
+      {"agentName":"codegen-agent","dependsOn":["spec-agent"],"optional":false},
+      {"agentName":"executor-agent","dependsOn":["codegen-agent"],"optional":false},
+      {"agentName":"analyzer-agent","dependsOn":["executor-agent"],"optional":true}
+    ]'::JSONB,
+    true,
+    true,
+    'system'
+  ),
+  (
+    'quick-codegen-pipeline',
+    'Quick Code Generation (No Exec)',
+    'Faster pipeline for code-only: spec → codegen only',
+    '*',
+    '[
+      {"agentName":"spec-agent","dependsOn":[],"optional":false},
+      {"agentName":"codegen-agent","dependsOn":["spec-agent"],"optional":false}
+    ]'::JSONB,
+    true,
+    true,
+    'system'
+  )
+ON CONFLICT DO NOTHING;

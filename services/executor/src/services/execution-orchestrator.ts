@@ -5,8 +5,11 @@ import {
 import { createSandbox, updateSandboxFiles } from '../utils/sandbox'
 import { runGoTests } from '../runners/go-runner'
 import { runTSTests } from '../runners/ts-runner'
+import { runCSharpTests } from '../runners/csharp-runner'
+import { runJavaTests } from '../runners/java-runner'
+import { runPythonTests } from '../runners/python-runner'
 import { autoFix } from '../autofix/auto-fixer'
-import { isFixable } from '../autofix/error-summarizer'
+import { isFixable, summarizeErrors } from '../autofix/error-summarizer'
 import { broadcastProgress } from './result-store'
 import { logger } from '../utils/logger'
 import * as metrics from '../metrics'
@@ -16,6 +19,19 @@ import { Pool } from 'pg'
 let configLoader: ConfigLoader
 export function initializeConfigLoader(pool: Pool) {
   configLoader = new ConfigLoader(pool)
+}
+
+// ── Agent 系统上下文（Phase 4.2） ────────────────────────────
+let agentRegistry: any = null  // AgentRegistry
+let taskBus: any = null        // TaskBus
+let llmRouter: any = null      // LLMRouter
+let pool: any = null           // Database pool for pipeline loading (Phase 5.2)
+
+export function setAppContext(context: { registry: any; taskBus: any; llmRouter: any; pool?: any }) {
+  agentRegistry = context.registry
+  taskBus = context.taskBus
+  llmRouter = context.llmRouter
+  pool = context.pool  // Pipeline loading (Phase 5.2)
 }
 
 let MAX_FIX_ATTEMPTS = 3
@@ -40,6 +56,146 @@ function extractErrorPatterns(testResults: TestRunResult[]): string[] {
     .map(t => t.errorMessage || t.name)
     .filter(Boolean)
     .slice(0, 5) as string[]
+}
+
+// ── 从数据库加载 Auto-Fix Pipeline（Phase 5.2）─────────────
+async function loadAutoFixPipelineFromDb(taskId: string, projectId: string): Promise<any[] | null> {
+  try {
+    if (!pool) return null
+
+    // 优先加载项目特定的auto-fix管道，其次使用全局默认
+    const r = await pool.query(
+      `SELECT nodes FROM pipeline_definitions
+       WHERE name LIKE '%-auto-fix-%' AND enabled=true AND (project_id IS NULL OR project_id=$1)
+       ORDER BY project_id DESC NULLS LAST LIMIT 1`,
+      [projectId]
+    )
+
+    if (!r.rows.length) {
+      logger.info({ taskId, projectId }, '[Phase 5.2] 未找到 auto-fix Pipeline，使用原始 auto-fix')
+      return null
+    }
+
+    const pipelineDef = r.rows[0]
+    const nodes = pipelineDef.nodes
+
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+      logger.warn({ taskId }, '[Phase 5.2] Auto-fix Pipeline 节点为空')
+      return null
+    }
+
+    logger.info({ taskId, nodeCount: nodes.length }, '[Phase 5.2] ✅ 加载 auto-fix Pipeline 成功')
+    return nodes
+  } catch (err) {
+    logger.warn({ taskId, err }, '[Phase 5.2] 加载 auto-fix Pipeline 失败，回退到原始实现')
+    return null
+  }
+}
+
+// ── 使用 Agent 管道的自动修复函数 ────────────────────────────
+async function autoFixWithAgent(
+  attempt: number,
+  spec: any,
+  currentFiles: GeneratedFile[],
+  testResults: TestRunResult[],
+  taskId: string,
+  projectId: string = 'default'
+): Promise<FixAttempt> {
+  // 如果 Agent 系统不可用，回退到原始实现
+  if (!agentRegistry || !taskBus) {
+    logger.warn({ taskId, attempt }, '[Phase 5.2] Agent 系统未初始化，回退到直接 autoFix')
+    return autoFix(attempt, spec, currentFiles, testResults)
+  }
+
+  try {
+    const start = Date.now()
+    const STRATEGIES: Record<number, { strategy: any; instruction: string }> = {
+      1: {
+        strategy: 'direct_fix',
+        instruction: '直接根据错误信息修复代码。保持原有架构不变，只修改有问题的部分。'
+      },
+      2: {
+        strategy: 'rethink_then_fix',
+        instruction: '先分析失败根因，重新思考实现方案后再修复。特别注意边界条件和并发安全。'
+      },
+      3: {
+        strategy: 'simplify_then_fix',
+        instruction: '简化实现：去掉不必要的复杂逻辑，用最直接的方式实现功能。'
+      }
+    }
+
+    const { strategy, instruction } = STRATEGIES[attempt] || STRATEGIES[3]
+    const errorSummary = summarizeErrors(testResults)
+
+    // ── Phase 5.2: 从数据库加载 auto-fix Pipeline ──────────
+    let fixPipeline = await loadAutoFixPipelineFromDb(taskId, projectId)
+
+    // 如果数据库中没有管道，使用内置策略
+    if (!fixPipeline) {
+      logger.info({ taskId, attempt }, '[Phase 5.2] 使用原始 auto-fix 实现')
+      return autoFix(attempt, spec, currentFiles, testResults)
+    }
+
+    // 构建自动修复管道上下文
+    const fixContext: any = {
+      taskId,
+      specId: spec.title || 'unknown',
+      projectId,
+      developerId: 'system',
+      spec,
+      retrieval: { errorSummary, testResults, strategy, instruction },
+      memory: {},
+      prevOutputs: {},
+      config: {
+        maxRetries: 1,
+        timeoutMs: 120000,
+        temperature: 0.3,
+        model: process.env.DEFAULT_LLM_MODEL || 'claude-sonnet-4',
+        domain: { name: 'auto-fix', language: [], conventions: [instruction], outputFormat: 'code' }
+      }
+    }
+
+    logger.info({ taskId, attempt, pipelineNodeCount: fixPipeline.length }, '[Phase 5.2] 使用 Agent 管道自动修复')
+
+    // 执行 auto-fix Agent 管道
+    const fixResult = await taskBus.run({
+      id: `${taskId}-autofix-${attempt}`,
+      nodes: fixPipeline,
+      context: fixContext,
+      onProgress: (event: any) => {
+        logger.debug({ taskId, attempt, agentName: event.agentName, status: event.status }, '[Phase 5.2] Auto-fix 进度')
+      }
+    })
+
+    // 如果 Agent 管道失败或没有输出，回退到原始实现
+    if (fixResult.status !== 'success' || !fixResult.outputs) {
+      logger.warn({ taskId, attempt }, '[Phase 5.2] Agent auto-fix 未成功，回退到原始实现')
+      return autoFix(attempt, spec, currentFiles, testResults)
+    }
+
+    // 从 Agent 管道输出获取修复后的文件
+    const autoFixAgentOutput = fixResult.outputs['auto-fix-agent'] || fixResult.outputs[Object.keys(fixResult.outputs)[Object.keys(fixResult.outputs).length - 1]]
+
+    if (autoFixAgentOutput?.files && Array.isArray(autoFixAgentOutput.files)) {
+      logger.info({ taskId, attempt, duration: Date.now() - start }, '[Phase 5.2] ✅ Agent auto-fix 成功生成文件')
+      return {
+        attempt,
+        success: true,
+        fixedFiles: autoFixAgentOutput.files,
+        strategy: strategy as any,
+        errorSummary: errorSummary,
+        testResult: testResults[0] || { language: 'unknown', status: 'unknown' as any, totalTests: 0, passedTests: 0, failedTests: 0, testCases: [], rawOutput: '', durationMs: 0 },
+        durationMs: Date.now() - start
+      }
+    }
+
+    // 如果没有文件输出，回退到原始实现
+    logger.warn({ taskId, attempt }, '[Phase 5.2] Agent auto-fix 无文件输出，回退到原始实现')
+    return autoFix(attempt, spec, currentFiles, testResults)
+  } catch (err) {
+    logger.error({ taskId, attempt, err }, '[Phase 5.2] Agent auto-fix 异常，回退到原始实现')
+    return autoFix(attempt, spec, currentFiles, testResults)
+  }
 }
 
 // ── 主编排函数 ───────────────────────────────────────────────
@@ -81,7 +237,7 @@ export async function executeAndTest(
     // ── Round 0：初次测试 ────────────────────────────────────
     await broadcastProgress(taskId, 'test_running', { round: 0 })
     logger.info({ taskId }, '▶ 第 0 轮：初次运行测试')
-    const initialResults = await runAllTests(sandbox.goDir, sandbox.tsDir, taskId, spec.platform, currentFiles)
+    const initialResults = await runAllTests(sandbox.goDir, sandbox.tsDir, taskId, spec.platform, currentFiles, sandbox.csharpDir, sandbox.javaDir, sandbox.pythonDir)
     allTestResults.push(...initialResults)
 
     // 发布详细测试输出
@@ -124,8 +280,9 @@ export async function executeAndTest(
       await broadcastProgress(taskId, 'auto_fix_running', { attempt, total: MAX_FIX_ATTEMPTS })
       logger.info({ taskId, attempt }, `🔧 Auto-Fix 第 ${attempt} 次`)
 
-      // 调 LLM 修复
-      const fix = await autoFix(attempt, spec, currentFiles, allTestResults)
+      // 调用自动修复（Phase 4.2：优先使用 Agent 管道，回退到 LLM 直接调用）
+      // Phase 5.2: 从数据库加载 auto-fix Pipeline
+      const fix = await autoFixWithAgent(attempt, spec, currentFiles, allTestResults, taskId, projectId)
       fixAttempts.push(fix)
 
       if (!fix.success) {
@@ -148,7 +305,7 @@ export async function executeAndTest(
       // 重新跑测试
       await broadcastProgress(taskId, 'test_running', { round: attempt })
       logger.info({ taskId, attempt }, '▶ 重新运行测试')
-      const retestResults = await runAllTests(sandbox.goDir, sandbox.tsDir, taskId, spec.platform)
+      const retestResults = await runAllTests(sandbox.goDir, sandbox.tsDir, taskId, spec.platform, undefined, sandbox.csharpDir, sandbox.javaDir, sandbox.pythonDir)
       allTestResults.push(...retestResults)
 
       // 发布重新测试的输出
@@ -202,7 +359,10 @@ async function runAllTests(
   tsDir: string,
   taskId: string,
   platforms: ('client' | 'server')[],
-  generatedFiles?: any[]  // 可选：生成的文件列表，用于获取实际的语言信息
+  generatedFiles?: any[],  // 可选：生成的文件列表，用于获取实际的语言信息
+  csharpDir?: string,      // Phase 4.3
+  javaDir?: string,        // Phase 4.3
+  pythonDir?: string       // Phase 4.3
 ): Promise<TestRunResult[]> {
   const tasks: Promise<TestRunResult>[] = []
 
@@ -217,15 +377,15 @@ async function runAllTests(
     if (languages.has('typescript')) {
       tasks.push(runTSTests(tsDir, taskId))
     }
-    // C#、Java、Python 暂时返回占位结果（实际测试运行器需要后续实现）
-    if (languages.has('csharp')) {
-      tasks.push(createPlaceholderTestResult('csharp', taskId))
+    // C#、Java、Python 测试运行器（Phase 4.3）
+    if (languages.has('csharp') && csharpDir) {
+      tasks.push(runCSharpTests(csharpDir, taskId))
     }
-    if (languages.has('java')) {
-      tasks.push(createPlaceholderTestResult('java', taskId))
+    if (languages.has('java') && javaDir) {
+      tasks.push(runJavaTests(javaDir, taskId))
     }
-    if (languages.has('python')) {
-      tasks.push(createPlaceholderTestResult('python', taskId))
+    if (languages.has('python') && pythonDir) {
+      tasks.push(runPythonTests(pythonDir, taskId))
     }
   } else {
     // 向后兼容：如果没有文件信息，根据 platforms 字段运行

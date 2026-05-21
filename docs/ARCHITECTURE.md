@@ -158,6 +158,111 @@ LLMRouter.call({ providerName, system, user })
 
 ---
 
+## 四-1、Phase 5: 动态管道选择系统（2026-05-21）
+
+**目标**：无需改代码即可动态切换代码生成和自动修复策略，支持领域特化和多租户隔离。
+
+### 管道选择流程
+
+**在 code-generator 中的运行时选择**：
+```typescript
+// 1. 从 pipeline_definitions 表加载管道
+const pipeline = await loadPipelineFromDb(domainKey, projectId)
+// 按 domain 和 project_id 过滤：
+// - domain 匹配当前 Spec（如 'game-server'、'customer-service'）
+// - project_id 用于多租户隔离
+// - 无匹配时自动降级到内置管道
+
+// 2. 启动 TaskBus DAG 执行
+const outputs = await taskBus.run(pipeline, ctx)
+```
+
+**在 executor 中的 auto-fix 管道选择**：
+```typescript
+// 1. 根据 projectId 加载自定义修复策略
+const fixPipeline = await loadAutoFixPipelineFromDb(projectId)
+// 支持自定义修复 Agent 和 Skill 组合
+
+// 2. 3 次重试循环，每次使用相同管道
+for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  const result = await taskBus.run(fixPipeline, ctx)
+  if (result.status === 'success') break
+}
+```
+
+### 前端管理 UI（admin-web）
+
+**新增「流水线」Tab**，支持：
+- ✅ CRUD 操作：创建、查看、编辑、测试、删除管道
+- ✅ 循环依赖检测：DAG 拓扑排序校验，防止死循环
+- ✅ 默认管道保护：`is_builtin=true` 的管道不可删除/修改
+- ✅ 实时验证：添加/修改时即时反馈错误
+
+**关键文件**：`frontend/admin-web/public/index.html` 的 Pipeline 页签（+100 行 HTML/JS）
+
+### 数据库表结构扩展
+
+```sql
+-- Phase 5 已在 dynamic-config-schema.sql 中定义
+CREATE TABLE pipeline_definitions (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL UNIQUE,
+  display_name VARCHAR(255),
+  domain VARCHAR(100),
+  project_id VARCHAR(100),
+  description TEXT,
+  agents_dag JSONB NOT NULL,  -- Agent DAG 配置
+  skill_overrides JSONB,      -- 技能覆盖映射
+  is_builtin BOOLEAN DEFAULT false,
+  enabled BOOLEAN DEFAULT true,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+**agents_dag 格式示例**：
+```json
+{
+  "nodes": [
+    {"id": "codegen", "type": "agent", "name": "code-generator-agent"},
+    {"id": "lint", "type": "skill", "name": "lint-skill"}
+  ],
+  "edges": [
+    {"from": "codegen", "to": "lint"}
+  ]
+}
+```
+
+### E2E 测试验证
+
+**文件**：`scripts/phase5-e2e-test.js` (+300 行，11 个测试用例)
+
+覆盖内容：
+- ✅ Pipeline CRUD 操作
+- ✅ 循环依赖检测（正负例）
+- ✅ 名称唯一性校验
+- ✅ 默认管道保护
+- ✅ runtime 选择（code-generator 按 domain + projectId）
+- ✅ auto-fix 管道加载和重试循环
+
+**运行方式**：
+```bash
+node scripts/phase5-e2e-test.js
+# 输出：✓ 11/11 tests passed
+```
+
+### 优势和特点
+
+| 特点 | 说明 |
+|------|------|
+| 零代码扩展 | 管道配置完全数据库驱动，无需改代码 |
+| 领域特化 | 支持按 domain 加载不同的 Agent 组合 |
+| 多租户隔离 | 同一 domain 下不同项目可使用不同管道 |
+| 自动降级 | 无匹配时回落到内置管道，保证服务可用性 |
+| 安全保护 | is_builtin=true 防止意外修改核心流水线 |
+
+---
+
 ## 五、知识库架构（Hybrid RAG）
 
 ```

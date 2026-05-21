@@ -15,6 +15,7 @@ let app: Express | null = null
 let registry: any = null  // AgentRegistry
 let taskBus: any = null   // TaskBus
 let llmRouter: any = null // LLMRouter
+let pool: any = null      // Database pool for pipeline loading
 
 // ── Topic 定义 ──────────────────────────────────────────────
 const TOPICS = {
@@ -29,6 +30,7 @@ export function setAppContext(express: Express) {
   registry = express.locals.agentRegistry
   taskBus = express.locals.taskBus
   llmRouter = express.locals.llmRouter
+  pool = express.locals.pool  // Pipeline loading
 }
 
 // ── 根据 Spec 语言确定领域配置 ────────────────────────────
@@ -45,6 +47,46 @@ function determineDomain(specLanguages?: string[]): { domainKey: string; config:
   }
   // 默认：Go + TypeScript 组合
   return { domainKey: 'game-server', config: DOMAIN_CONFIGS['game-server'] }
+}
+
+// ── 从数据库加载 Pipeline 定义 ────────────────
+async function loadPipelineFromDb(taskId: string, domainKey: string, projectId: string, pool: any): Promise<any[] | null> {
+  try {
+    const r = await pool.query(
+      `SELECT nodes FROM pipeline_definitions
+       WHERE domain=$1 AND enabled=true AND (project_id IS NULL OR project_id=$2)
+       ORDER BY project_id DESC NULLS LAST LIMIT 1`,
+      [domainKey, projectId]
+    )
+
+    if (!r.rows.length) {
+      logger.warn({ taskId, domainKey, projectId }, 'Pipeline 未找到，使用内置流水线')
+      return null
+    }
+
+    const pipelineDef = r.rows[0]
+    const nodes = pipelineDef.nodes
+
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+      logger.warn({ taskId, pipelineDef }, 'Pipeline 节点为空，使用内置流水线')
+      return null
+    }
+
+    logger.info({ taskId, nodeCount: nodes.length }, '✅ 从数据库加载 Pipeline 成功')
+    return nodes
+  } catch (err) {
+    logger.warn({ taskId, err }, '从数据库加载 Pipeline 失败，回退到内置流水线')
+    return null
+  }
+}
+
+// ── 转换 Pipeline 节点为 Agent DAG ─────────────
+function convertPipelineNodesToDAG(nodes: any[]): any[] {
+  return nodes.map(node => ({
+    agentName: node.agentName,
+    optional: node.optional || false,
+    dependsOn: node.dependsOn || []
+  }))
 }
 
 // ── 初始化 ──────────────────────────────────────────────────
@@ -133,7 +175,7 @@ export async function startConsumer(appContext?: Express) {
       }))
 
       try {
-        // 核心：使用 Agent 流水线替代直接的 generateCode() 调用（Phase 4.1）
+        // 核心：使用 Agent 流水线替代直接的 generateCode() 调用
         if (!registry || !taskBus) {
           throw new Error('Agent system not initialized')
         }
@@ -159,8 +201,21 @@ export async function startConsumer(appContext?: Express) {
           }
         }
 
-        // 构建和执行流水线
-        const pipeline = registry.buildPipeline(domainKey, 'standard')
+        // ── 从数据库加载 Pipeline 定义 ─────────────
+        let pipeline: any[] | null = null
+        if (pool) {
+          const dbNodes = await loadPipelineFromDb(taskId, domainKey, projectId || 'default', pool)
+          if (dbNodes) {
+            // 将数据库中的节点定义转换为 DAG
+            pipeline = convertPipelineNodesToDAG(dbNodes)
+          }
+        }
+
+        // 如果数据库中没有找到，回退到内置流水线
+        if (!pipeline) {
+          pipeline = registry.buildPipeline(domainKey, 'standard')
+        }
+
         const pipelineStart = Date.now()
 
         const pipelineResult = await taskBus.run({

@@ -12,6 +12,9 @@ export interface Sandbox {
   dir: string        // 沙箱根目录
   goDir: string      // Go 模块根目录
   tsDir: string      // TS 项目根目录
+  csharpDir: string  // C# 项目根目录（Phase 4.3）
+  javaDir: string    // Java 项目根目录（Phase 4.3）
+  pythonDir: string  // Python 项目根目录（Phase 4.3）
   cleanup: () => void
 }
 
@@ -22,17 +25,27 @@ export async function createSandbox(
   taskId: string,
   files: GeneratedFile[]
 ): Promise<Sandbox> {
-  const dir   = fs.mkdtempSync(path.join(os.tmpdir(), `awp-${taskId.slice(0, 8)}-`))
-  const goDir = path.join(dir, 'go')
-  const tsDir = path.join(dir, 'ts')
+  const dir       = fs.mkdtempSync(path.join(os.tmpdir(), `awp-${taskId.slice(0, 8)}-`))
+  const goDir     = path.join(dir, 'go')
+  const tsDir     = path.join(dir, 'ts')
+  const csharpDir = path.join(dir, 'csharp')
+  const javaDir   = path.join(dir, 'java')
+  const pythonDir = path.join(dir, 'python')
 
+  // 创建所有必要的目录
   fs.mkdirSync(goDir, { recursive: true })
   fs.mkdirSync(tsDir, { recursive: true })
+  fs.mkdirSync(csharpDir, { recursive: true })
+  fs.mkdirSync(javaDir, { recursive: true })
+  fs.mkdirSync(pythonDir, { recursive: true })
 
   logger.info({ taskId, dir }, '沙箱目录已创建')
 
   const goFiles = files.filter(f => f.language === 'go')
   const tsFiles = files.filter(f => f.language === 'typescript')
+  const csharpFiles = files.filter(f => f.language === 'csharp')
+  const javaFiles = files.filter(f => f.language === 'java')
+  const pythonFiles = files.filter(f => f.language === 'python')
 
   // 写入 Go 文件
   for (const file of goFiles) {
@@ -48,6 +61,27 @@ export async function createSandbox(
     fs.writeFileSync(dest, file.content, 'utf8')
   }
 
+  // 写入 C# 文件（Phase 4.3）
+  for (const file of csharpFiles) {
+    const dest = path.join(csharpDir, file.path)
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    fs.writeFileSync(dest, file.content, 'utf8')
+  }
+
+  // 写入 Java 文件（Phase 4.3）
+  for (const file of javaFiles) {
+    const dest = path.join(javaDir, file.path)
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    fs.writeFileSync(dest, file.content, 'utf8')
+  }
+
+  // 写入 Python 文件（Phase 4.3）
+  for (const file of pythonFiles) {
+    const dest = path.join(pythonDir, file.path)
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    fs.writeFileSync(dest, file.content, 'utf8')
+  }
+
   // 初始化 Go module（如果有 Go 文件）
   if (goFiles.length > 0) {
     await initGoModule(goDir, taskId, goFiles)
@@ -58,10 +92,17 @@ export async function createSandbox(
     await initTSProject(tsDir, tsFiles)
   }
 
-  logger.info({ taskId, goFiles: goFiles.length, tsFiles: tsFiles.length }, '沙箱文件写入完成')
+  logger.info({
+    taskId,
+    goFiles: goFiles.length,
+    tsFiles: tsFiles.length,
+    csharpFiles: csharpFiles.length,
+    javaFiles: javaFiles.length,
+    pythonFiles: pythonFiles.length
+  }, '沙箱文件写入完成')
 
   return {
-    dir, goDir, tsDir,
+    dir, goDir, tsDir, csharpDir, javaDir, pythonDir,
     cleanup: () => {
       try {
         fs.rmSync(dir, { recursive: true, force: true })
@@ -311,8 +352,27 @@ async function initTSProject(tsDir: string, files: GeneratedFile[]) {
 // ── 更新沙箱中的文件（Auto-Fix 后替换） ─────────────────────
 export function updateSandboxFiles(sandbox: Sandbox, files: GeneratedFile[]) {
   for (const file of files) {
-    const baseDir = file.language === 'go' ? sandbox.goDir : sandbox.tsDir
-    const dest    = path.join(baseDir, file.path)
+    let baseDir: string
+    switch (file.language) {
+      case 'go':
+        baseDir = sandbox.goDir
+        break
+      case 'typescript':
+        baseDir = sandbox.tsDir
+        break
+      case 'csharp':
+        baseDir = sandbox.csharpDir
+        break
+      case 'java':
+        baseDir = sandbox.javaDir
+        break
+      case 'python':
+        baseDir = sandbox.pythonDir
+        break
+      default:
+        baseDir = sandbox.tsDir  // 默认 TypeScript
+    }
+    const dest = path.join(baseDir, file.path)
     fs.mkdirSync(path.dirname(dest), { recursive: true })
     fs.writeFileSync(dest, file.content, 'utf8')
   }

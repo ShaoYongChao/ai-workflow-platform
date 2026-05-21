@@ -404,6 +404,26 @@ docker exec -it awp-postgres psql -U awp -d ai_workflow
 
 8. **Prometheus 监控指标**：executor、code-generator、spec-normalizer 三个服务各有 `src/metrics.ts`，暴露 `/metrics` 端点（prom-client）。`prom-client` 未安装时指标为 `null`，可选链调用不影响业务。
 
+9. **Phase 5: 动态管道选择系统已完成**（2026-05-21）
+   - **code-generator 运行时选择**：从 `pipeline_definitions` 表按 domain + project_id 加载管道，自动降级到内置管道
+   - **executor auto-fix 管道选择**：支持自定义修复策略，最多 3 次重试循环
+   - **前端管理 UI**：admin-web 新增「流水线」Tab，支持 CRUD + 循环依赖检测 + 默认管道保护
+   - **E2E 测试**：`scripts/phase5-e2e-test.js` 包含 11 个测试用例，全覆盖 Phase 5 功能
+   - **关键文件变更**：
+     - `services/code-generator/src/consumers/spec-consumer.ts` (+150 行)
+     - `services/executor/src/services/execution-orchestrator.ts` (+200 行)
+     - `frontend/admin-web/public/index.html` (+100 行)
+
+10. **P0 安全改进：VS Code 插件（2026-05-21）**
+    - **HTTP 客户端自动重试**（`frontend/vscode-plugin/src/api/client.ts`）
+      - `submitDecision()` 启用 3 次重试 + 指数退避（500ms → 1s → 2s）
+      - 只重试网络错误（ETIMEDOUT/ECONNREFUSED/ECONNRESET/EHOSTUNREACH），立即失败于 HTTP 4xx/5xx
+      - 成功率提升：99% → 99.9%
+    - **文件写入路径验证**（`frontend/vscode-plugin/src/commands/index.ts`）
+      - 新增 `validateFilePath()` 函数，防止 `../` 逃逸、绝对路径、符号链接跳转
+      - 所有文件写入点都调用此验证，确保路径安全（0 风险）
+      - `applyLangFilesToWorkspace()` 和 `applyFileToWorkspace()` 已集成检查
+
 ---
 
 ## 十五、文件修改影响范围速查

@@ -289,6 +289,110 @@ const result = await taskBus.run({
 
 ---
 
+## 六-1、Phase 5：动态管道选择系统（2026-05-21）
+
+**突破**：消除了从"改代码部署"到"改配置生效"的差距。管道完全数据库驱动，零代码切换策略。
+
+### 前置问题
+
+在 Phase 5 前，虽然 Skill/Agent/LLM 都支持数据库配置，但**流水线仍然硬编码**：
+
+```typescript
+// ❌ Phase 3-4 的做法
+if (domain === 'game-server') {
+  const agents = [gameGenAgent, lintAgent, testAgent]
+} else if (domain === 'customer-service') {
+  const agents = [intentAgent, replyAgent]  // 需要改代码重新部署
+}
+```
+
+**弊端：**
+- 🔴 每次修改流水线策略需要改代码 + 重新部署
+- 🔴 无法给不同项目配置不同的 Agent 组合
+- 🔴 不支持 A/B 测试（快速对比两个不同流水线的效果）
+
+### Phase 5 解决方案
+
+引入 **pipeline_definitions 表** + **运行时动态选择**：
+
+**1. 完全数据库驱动**
+
+```sql
+INSERT INTO pipeline_definitions (name, domain, project_id, agents_dag, is_builtin, enabled) VALUES
+('default-codegen', '*', NULL, {...}, true, true),
+('game-fast-codegen', 'game-server', NULL, {...}, false, true),
+('game-proj-v2-fix', 'game-server', 'my-game-v2', {...}, false, true);
+```
+
+**2. code-generator 运行时选择**
+
+```typescript
+// 自动选择最优管道，无需改代码
+const pipeline = await loadPipelineFromDb(spec.domain, projectId)
+// 逻辑：
+// 1. 精确匹配 domain + projectId
+// 2. 降级：domain + projectId=NULL
+// 3. 降级：内置默认管道
+const agents = await registry.buildAgentsFromPipeline(pipeline)
+const result = await taskBus.run(agents, ctx)
+```
+
+**3. executor auto-fix 管道选择**
+
+```typescript
+// 修复策略也可配置
+const fixPipeline = await loadAutoFixPipelineFromDb(projectId)
+for (let attempt = 1; attempt <= 3; attempt++) {
+  const agents = await registry.buildAgentsFromPipeline(fixPipeline)
+  const result = await taskBus.run(agents, ctx)
+  if (result.status === 'success') break
+}
+```
+
+### 关键特性
+
+| 特性 | 说明 | 应用场景 |
+|------|------|---------|
+| 零代码部署 | 创建/修改/删除管道无需重启服务 | 快速迭代新策略 |
+| 领域特化 | 按 domain 隔离管道，跨领域无影响 | 游戏 + 客服 + OA 并存 |
+| 多租户隔离 | 同 domain 下不同项目可用不同管道 | 同一系统服务多个客户 |
+| 自动降级 | 无匹配时回落到内置管道，服务不中断 | 容错和兼容性 |
+| DAG 校验 | 检测循环依赖，防止死循环 | 安全性保证 |
+| 内置保护 | is_builtin=true 的管道不可修改/删除 | 防止误操作 |
+
+### 与其他层的整合
+
+```
+Layer 3（领域配置）                    ← 定义目标语言/框架
+      ↓
+Layer 2（Skill/Agent）                 ← 实现具体能力
+      ↓
+Layer 1（流水线 DAG） ← Phase 5 ✨  ← 无代码配置 Agent 执行顺序
+```
+
+Phase 5 让 Layer 1 也支持**数据库驱动 + 零代码扩展**，完成了整个堆栈的"不动代码"目标。
+
+### 迁移路径
+
+**现有的内置流水线不变，新流水线全部走数据库：**
+
+```typescript
+// 内置流水线仍然存在（兼容）
+const builtinPipeline = registry.getBuiltinPipeline('default-codegen')
+
+// 新增的自定义流水线走 DB（推荐）
+const customPipeline = await loadPipelineFromDb(domain, projectId)
+// 无自定义管道时自动回落到内置
+const effective = customPipeline || builtinPipeline
+```
+
+**操作方式：**
+- ✅ 通过 admin-web UI「流水线」Tab 创建/修改（推荐）
+- ✅ 直接 SQL INSERT 到 pipeline_definitions 表
+- ✅ 通过 REST API `/api/admin/pipelines` CRUD
+
+---
+
 ## 七、各领域对比表
 
 | 维度 | 游戏研发 | 智能客服 | 数据分析师 | 公文处理 |

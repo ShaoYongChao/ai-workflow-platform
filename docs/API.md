@@ -358,6 +358,115 @@ X-Admin-Key: <admin_key>          # 管理 API 鉴权（仅 admin 服务需要�
 - `enable_sonarqube`: 是否启用 SonarQube
 - `kb_min_quality_score`: 知识库最低质量分
 
+### 流水线（Phase 5）
+
+**动态管道选择系统** — 支持运行时切换代码生成和 auto-fix 策略（需 X-Admin-Key）
+
+| Method | Path | 说明 |
+|--------|------|------|
+| GET | `/api/admin/pipelines` | 获取所有管道 |
+| GET | `/api/admin/pipelines/:id` | 获取管道详情 |
+| POST | `/api/admin/pipelines` | 创建管道 |
+| PUT | `/api/admin/pipelines/:id` | 修改管道 |
+| DELETE | `/api/admin/pipelines/:id` | 删除管道（内置管道受保护） |
+| POST | `/api/admin/pipelines/:id/test` | 测试管道 DAG 有效性 |
+
+**创建/修改管道请求体：**
+```json
+{
+  "name": "game-server-fast-fix",
+  "display_name": "游戏服务器快速修复流水线",
+  "domain": "game-server",
+  "project_id": null,                    // null 表示全局，指定则仅限该项目
+  "description": "优化游戏服务器生成和修复速度",
+  "agents_dag": {
+    "nodes": [
+      {
+        "id": "gen",
+        "type": "agent",
+        "name": "code-generator-agent",
+        "config": { "maxTokens": 4096, "temperature": 0.2 }
+      },
+      {
+        "id": "lint",
+        "type": "skill",
+        "name": "lint-check-skill",
+        "config": {}
+      }
+    ],
+    "edges": [
+      { "from": "gen", "to": "lint" }
+    ]
+  },
+  "skill_overrides": {
+    "existing_skill_name": {
+      "preferred_llm": "deepseek-v3",
+      "temperature": 0.1
+    }
+  },
+  "is_builtin": false
+}
+```
+
+**响应（获取管道列表）：**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "name": "default-codegen-pipeline",
+      "display_name": "默认代码生成流水线",
+      "domain": "*",
+      "project_id": null,
+      "is_builtin": true,
+      "enabled": true,
+      "created_at": "2026-05-21T10:00:00Z",
+      "updated_at": "2026-05-21T10:00:00Z"
+    }
+  ]
+}
+```
+
+**测试管道请求体：**
+```json
+{
+  "taskType": "codegen|autofix",
+  "spec": {                            // 仅 codegen 需要
+    "title": "...",
+    "goal": "...",
+    ...
+  }
+}
+```
+
+**流水线选择逻辑（runtime）：**
+
+1. **代码生成流程（code-generator）**
+   ```
+   getEffectivePipeline(spec, projectId)
+     ├── 查询：domain=spec.domain AND project_id=projectId
+     ├── 无结果 → 查询：domain=spec.domain AND project_id IS NULL
+     ├── 无结果 → 使用内置默认管道
+     └── 返回第一个匹配且 enabled=true 的管道
+   ```
+
+2. **自动修复流程（executor）**
+   ```
+   getFixPipeline(projectId)
+     ├── 查询：domain="auto-fix" AND project_id=projectId
+     ├── 无结果 → 查询：domain="auto-fix" AND project_id IS NULL
+     ├── 无结果 → 使用内置 auto-fix 管道
+     └── 返回第一个 enabled=true 的管道
+   ```
+
+**安全和约束：**
+- ✅ 内置管道（`is_builtin=true`）不可删除/修改（返回 403）
+- ✅ 创建时自动检测循环依赖（DAG 拓扑排序），发现则拒绝
+- ✅ 修改时同样检测循环依赖
+- ✅ 删除管道时如果有任务在使用则拒绝（返回 409）
+- ✅ 所有操作记录在 audit_logs（resource_type="pipeline"）
+
 ### 统计
 
 | Method | Path | 说明 |

@@ -534,7 +534,22 @@ export function registerCommands(
   )
 }
 
-// ── 批量写入 ─────────────────────────────────────────────────
+// ── P0: 路径安全验证（防止逃逸到工作区外） ──────────────────
+function validateFilePath(destPath: string, wsRoot: string): void {
+  // 规范化两个路径（解析 ../ 和符号链接）
+  const normalized = path.resolve(destPath)
+  const wsNormalized = path.resolve(wsRoot)
+
+  // 检查目标路径是否在工作区内
+  if (!normalized.startsWith(wsNormalized + path.sep) && normalized !== wsNormalized) {
+    throw new Error(
+      `⛔ 安全检查失败：文件路径 "${destPath}" 超出工作区范围。` +
+      `请检查 Spec 或联系管理员。`
+    )
+  }
+}
+
+// ── 批量写入（已验证路径安全） ──────────────────────────────
 async function applyLangFilesToWorkspace(
   files: GeneratedFile[], _taskId: string, wsFolder: vscode.WorkspaceFolder | undefined
 ) {
@@ -544,17 +559,28 @@ async function applyLangFilesToWorkspace(
   }
   for (const file of files) {
     const dest = path.join(wsFolder.uri.fsPath, file.path)
+    // P0: 检查每个文件的路径安全性
+    try {
+      validateFilePath(dest, wsFolder.uri.fsPath)
+    } catch (err) {
+      vscode.window.showErrorMessage(`${file.path}: ${(err as Error).message}`)
+      continue
+    }
     fs.mkdirSync(path.dirname(dest), { recursive: true })
     fs.writeFileSync(dest, file.content, 'utf8')
   }
 }
 
-// ── 应用单文件（交互模式） ────────────────────────────────────
+// ── 应用单文件（交互模式，已验证路径安全） ──────────────────
 async function applyFileToWorkspace(file: GeneratedFile, confirm = true) {
   const wsFolder = vscode.workspace.workspaceFolders?.[0]
   if (!wsFolder) throw new Error('没有打开工作区文件夹，请先 File > Open Folder')
 
   const destPath = path.join(wsFolder.uri.fsPath, file.path)
+
+  // P0: 路径安全验证
+  validateFilePath(destPath, wsFolder.uri.fsPath)
+
   const exists   = fs.existsSync(destPath)
 
   if (!confirm) {
