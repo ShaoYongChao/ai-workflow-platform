@@ -20,6 +20,11 @@ export function getPool(): Pool {
   return pool
 }
 
+export function getRedis(): Redis {
+  if (!redis) throw new Error('Redis not initialized. Call initRedis() first.')
+  return redis
+}
+
 // ── 创建任务记录 ────────────────────────────────────────────
 export async function createTask(specId: string, priority: string): Promise<string> {
   const res = await pool.query(

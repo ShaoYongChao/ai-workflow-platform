@@ -12,6 +12,11 @@ export function initRedis() {
   redis.on('error', err => logger.error(err, 'Redis 错误'))
 }
 
+export function getRedis(): Redis {
+  if (!redis) throw new Error('Redis not initialized. Call initRedis() first.')
+  return redis
+}
+
 // ── 保存执行结果到 DB ────────────────────────────────────────
 export async function saveExecutionResult(result: ExecutionResult) {
   const { taskId, status, finalFiles, testResults, fixAttempts, totalDurationMs } = result

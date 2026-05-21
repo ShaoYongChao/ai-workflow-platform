@@ -238,4 +238,4 @@ VALUES
     true,
     'system'
   )
-ON CONFLICT DO NOTHING;
+ON CONFLICT (name, project_id) DO NOTHING;

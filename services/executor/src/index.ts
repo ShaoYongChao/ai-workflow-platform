@@ -2,7 +2,7 @@ import express from 'express'
 import { createServer } from 'http'
 import cors from 'cors'
 import { logger } from './utils/logger'
-import { initDB, initRedis } from './services/result-store'
+import { initDB, initRedis, getRedis } from './services/result-store'
 import { startConsumer, stopConsumer } from './consumers/code-consumer'
 import { taskApiRouter, specApiRouter, initTaskAPI } from './routes/task-api'
 import { attachWebSocketServer } from './services/websocket-server'
@@ -10,6 +10,8 @@ import { initializeConfigLoader, setAppContext } from './services/execution-orch
 import 'dotenv/config'
 import { Pool } from 'pg'
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const configManager = require('../../../shared/config-manager')
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { tenantMiddleware } = require('../../../gateway/tenant-middleware')
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -51,21 +53,26 @@ async function bootstrap() {
     initDB()
     logger.info('✅ PostgreSQL 初始化')
 
+    initRedis()
+    logger.info('✅ Redis 初始化')
+
     // 为 ConfigLoader 初始化 pool
     const configPool = new Pool({ connectionString: process.env.POSTGRES_URL })
     initializeConfigLoader(configPool)
     logger.info('✅ ConfigLoader 初始化')
+
+    // 初始化配置管理器
+    const redis = getRedis()
+    await configManager.init(configPool, redis)
+    logger.info('✅ 配置管理器初始化')
 
     // 初始化 Agent 系统（Phase 4.2）
     const llmRouter = getLLMRouter(configPool)
     const { registry, taskBus } = await initializeAgentSystem(configPool, llmRouter)
     logger.info(`✅ Agent 系统初始化，${registry.list().length} 个内置 Agent`)
 
-    // 将 registry 和 taskBus 传递给执行编排器
-    setAppContext({ registry, taskBus, llmRouter })
-
-    initRedis()
-    logger.info('✅ Redis 初始化')
+    // 将 registry、taskBus 和 configManager 传递给执行编排器
+    setAppContext({ registry, taskBus, llmRouter, configManager })
 
     initTaskAPI()
     logger.info('✅ Task API 初始化')

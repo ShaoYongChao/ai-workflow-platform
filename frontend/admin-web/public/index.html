@@ -149,20 +149,60 @@ function catLabel(cat) {
 
 // ── 总览 ─────────────────────────────────────────────────────
 function OverviewTab({stats}) {
+  const [detail, setDetail] = useState(null);
+  const [detailData, setDetailData] = useState(null);
+
   const cards = [
-    {label:'7天新需求',value:stats?.specs_7d??'...',color:T.blue},
-    {label:'执行中',value:stats?.tasks?.running??0,color:T.amber},
-    {label:'待 Review',value:stats?.tasks?.test_pass??0,color:T.green},
-    {label:'知识库条目',value:stats?.kb?.total??'...',color:T.purple},
-    {label:'启用 Agent',value:stats?.agents?.enabled!==undefined?parseInt(stats.agents.enabled):'...',color:T.blue},
-    {label:'启用 Skill',value:stats?.skills?.enabled!==undefined?parseInt(stats.skills.enabled):'...',color:T.green},
+    {label:'7天新需求',value:stats?.specs_7d??'...',color:T.blue,key:'specs'},
+    {label:'执行中',value:stats?.tasks?.running??0,color:T.amber,key:'running'},
+    {label:'待 Review',value:stats?.tasks?.test_pass??0,color:T.green,key:'test_pass'},
+    {label:'知识库条目',value:stats?.kb?.total??'...',color:T.purple,key:'kb'},
+    {label:'启用 Agent',value:stats?.agents?.enabled!==undefined?parseInt(stats.agents.enabled):'...',color:T.blue,key:'agents'},
+    {label:'启用 Skill',value:stats?.skills?.enabled!==undefined?parseInt(stats.skills.enabled):'...',color:T.green,key:'skills'},
   ];
+
+  const loadDetail = async (key) => {
+    if (key === 'specs') return; // specs 无详情
+    setDetail(key);
+    try {
+      let data = [];
+      if (key === 'running' || key === 'test_pass') {
+        const q = new URLSearchParams({status: key, limit: '5'});
+        const r = await api(`/tasks?${q}`);
+        data = r.items || [];
+      } else if (key === 'agents') {
+        data = await api('/agents');
+        data = Array.isArray(data) ? data : [];
+      } else if (key === 'skills') {
+        data = await api('/skills');
+        data = Array.isArray(data) ? data : [];
+      } else if (key === 'kb') {
+        const q = new URLSearchParams({limit: '10'});
+        const r = await api(`/kb?${q}`);
+        data = r.items || [];
+      }
+      setDetailData(data);
+    } catch(e) {
+      window.__showToast?.(e.message, 'error');
+      setDetail(null);
+    }
+  };
+
+  const detailLabels = {
+    running: '执行中的任务',
+    test_pass: '待 Review 的任务',
+    agents: 'Agent 列表',
+    skills: 'Skill 列表',
+    kb: '知识库条目'
+  };
+
   return (
     <div>
       <H1>系统总览</H1>
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16,marginBottom:24}}>
         {cards.map(c=>(
-          <div key={c.label} style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:8,padding:'16px 20px'}}>
+          <div key={c.label} onClick={()=>loadDetail(c.key)}
+            style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:8,padding:'16px 20px',cursor:'pointer',transition:'all 0.2s'}}>
             <div style={{fontSize:28,fontWeight:700,color:c.color}}>{c.value}</div>
             <div style={{fontSize:12,color:T.text4,marginTop:4}}>{c.label}</div>
           </div>
@@ -177,6 +217,52 @@ function OverviewTab({stats}) {
           </div>
         </Card>
       )}
+      {detail&&detailData&&(
+        <Modal title={detailLabels[detail]} onClose={()=>setDetail(null)} wide>
+          {(detail==='running'||detail==='test_pass')&&(
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {detailData.length===0?<div style={{color:T.text4}}>暂无</div>:
+                detailData.map(t=>(
+                  <div key={t.id} style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:6,padding:'12px 16px'}}>
+                    <div style={{color:T.text1,fontWeight:500}}>{t.spec_title}</div>
+                    <div style={{fontSize:11,color:T.text4,marginTop:4}}>{t.id.slice(0,8)} · {fmtTime(t.created_at)}</div>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+          {(detail==='agents'||detail==='skills')&&(
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {detailData.length===0?<div style={{color:T.text4}}>暂无</div>:
+                detailData.slice(0,10).map(item=>(
+                  <div key={item.id||item.name} style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:6,padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div>
+                      <div style={{color:T.text1,fontWeight:500}}>{item.display_name||item.name}</div>
+                      <div style={{fontSize:11,color:T.text4,marginTop:2}}>{item.description?.slice(0,60)||'—'}</div>
+                    </div>
+                    {(item.enabled==='true'||item.enabled===true)?<Tag color={T.green}>启用</Tag>:<Tag color={T.red}>禁用</Tag>}
+                  </div>
+                ))
+              }
+            </div>
+          )}
+          {detail==='kb'&&(
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {detailData.length===0?<div style={{color:T.text4}}>暂无</div>:
+                detailData.map(e=>(
+                  <div key={e.id} style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:6,padding:'12px 16px'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                      <span style={{color:T.text1,fontWeight:500}}>{e.title}</span>
+                      {e.language&&<Tag color={T.blue}>{e.language}</Tag>}
+                      <span style={{fontSize:11,color:T.text4}}>质量 {e.quality_score}</span>
+                    </div>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }
@@ -187,6 +273,7 @@ function LLMTab() {
   const [form,setForm] = useState(null);
   const [testing,setTesting] = useState(null);
   const [testResult,setTestResult] = useState({});
+  const [showOthers, setShowOthers] = useState(false);
   const TYPES = ['anthropic','openai','deepseek','gemini','qwen','zhipu','ollama','azure','custom'];
 
   const load = () => api('/llm-providers').then(setProviders).catch(e=>window.__showToast?.(e.message));
@@ -203,38 +290,107 @@ function LLMTab() {
     setTesting(null);
   };
 
+  const setDefault = async (name) => {
+    try {
+      // 先取消其他默认设置
+      for (const p of providers.filter(pr => (pr.is_default==='true'||pr.is_default===true) && pr.name !== name)) {
+        await api(`/llm-providers/${p.name}`,{method:'PUT',body:JSON.stringify({is_default:false})});
+      }
+      // 再设置新的默认
+      await api(`/llm-providers/${name}`,{method:'PUT',body:JSON.stringify({is_default:true})});
+      load();
+      window.__showToast?.('已设置为默认模型','ok');
+    } catch(e) {
+      window.__showToast?.(e.message,'error');
+    }
+  };
+
+  const toggleEnabled = async (name, currentEnabled) => {
+    try {
+      await api(`/llm-providers/${name}`,{method:'PUT',body:JSON.stringify({enabled:!currentEnabled})});
+      load();
+    } catch(e) {
+      window.__showToast?.(e.message,'error');
+    }
+  };
+
+  const defaultProviders = providers.filter(p=>['anthropic','openai'].includes(p.provider_type));
+  const otherProviders = providers.filter(p=>!['anthropic','openai'].includes(p.provider_type));
+
   return (
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
         <H1>LLM 模型配置</H1>
-        <Btn onClick={()=>setForm({provider_type:'openai',max_output_tokens:8192,context_window:128000})}>+ 添加模型</Btn>
+        <Btn onClick={()=>setForm({provider_type:'openai',max_output_tokens:8192,context_window:128000})}>+ 添加自定义模型</Btn>
       </div>
-      {providers.length===0&&<div style={{color:T.text3,padding:32,textAlign:'center',background:T.bg2,borderRadius:8,border:`1px solid ${T.border}`}}>暂无 LLM 模型配置，点击右上角「+ 添加模型」</div>}
-      <div style={{display:'flex',flexDirection:'column',gap:10}}>
-        {providers.map(p=>(
-          <div key={p.name} style={{background:T.bg2,border:`1px solid ${p.is_default==='true'||p.is_default===true?T.blue:T.border}`,borderRadius:8,padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
-            <div style={{flex:1}}>
-              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                <strong style={{color:T.text1}}>{p.display_name}</strong>
-                <Tag color={providerColor(p.provider_type)}>{p.provider_type}</Tag>
-                {(p.is_default==='true'||p.is_default===true)&&<Tag color={T.green}>默认</Tag>}
-                {(p.enabled==='false'||p.enabled===false)&&<Tag color={T.red}>已禁用</Tag>}
-              </div>
-              <div style={{fontSize:12,color:T.text4,marginTop:4}}>{p.model_id} · 上下文 {Math.round((parseInt(p.context_window)||0)/1000)}K</div>
-              {testResult[p.name]&&(
-                <div style={{fontSize:11,marginTop:4,color:testResult[p.name].ok?T.green:T.red}}>
-                  {testResult[p.name].ok?`✓ ${testResult[p.name].latencyMs}ms — ${(testResult[p.name].content||'').slice(0,40)}`:`✗ ${testResult[p.name].error}`}
+      {providers.length===0&&<div style={{color:T.text3,padding:32,textAlign:'center',background:T.bg2,borderRadius:8,border:`1px solid ${T.border}`}}>暂无 LLM 模型配置，点击右上角「+ 添加自定义模型」</div>}
+
+      {defaultProviders.length>0&&(
+        <div style={{marginBottom:32}}>
+          <Label style={{marginBottom:16}}>推荐模型（点击卡片切换为默认）</Label>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:16}}>
+            {defaultProviders.map(p=>(
+              <div key={p.name} onClick={()=>setDefault(p.name)}
+                style={{background:T.bg2,border:`2px solid ${p.is_default==='true'||p.is_default===true?T.blue:T.border}`,borderRadius:8,padding:'16px',cursor:'pointer',transition:'all 0.2s',opacity:(p.enabled==='false'||p.enabled===false)?0.5:1}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'start',marginBottom:12}}>
+                  <div>
+                    <strong style={{color:T.text1,fontSize:14}}>{p.display_name}</strong>
+                    <div style={{fontSize:11,color:T.text4,marginTop:4}}>{p.model_id}</div>
+                  </div>
+                  {(p.is_default==='true'||p.is_default===true)&&<Tag color={T.green}>默认</Tag>}
                 </div>
-              )}
-            </div>
-            <div style={{display:'flex',gap:8,flexShrink:0}}>
-              <SmallBtn onClick={()=>testProvider(p.name)} disabled={testing===p.name}>{testing===p.name?'测试中...':'测试'}</SmallBtn>
-              <SmallBtn onClick={async()=>{await api(`/llm-providers/${p.name}`,{method:'PUT',body:JSON.stringify({enabled:p.enabled==='true'||p.enabled===true?false:true})});load()}}>{(p.enabled==='true'||p.enabled===true)?'禁用':'启用'}</SmallBtn>
-              <SmallBtn onClick={()=>setForm(p)}>编辑</SmallBtn>
-            </div>
+                <div style={{fontSize:12,color:T.text3,marginBottom:12}}>上下文 {Math.round((parseInt(p.context_window)||0)/1000)}K · 输出 {Math.round((parseInt(p.max_output_tokens)||0)/1000)}K</div>
+                {testResult[p.name]&&(
+                  <div style={{fontSize:11,marginBottom:10,color:testResult[p.name].ok?T.green:T.red}}>
+                    {testResult[p.name].ok?`✓ ${testResult[p.name].latencyMs}ms`:`✗ ${testResult[p.name].error}`}
+                  </div>
+                )}
+                <div style={{display:'flex',gap:6}}>
+                  <SmallBtn onClick={e=>{e.stopPropagation();testProvider(p.name)}} disabled={testing===p.name} style={{flex:1}}>
+                    {testing===p.name?'测试中...':'测试'}
+                  </SmallBtn>
+                  <SmallBtn onClick={e=>{e.stopPropagation();toggleEnabled(p.name,p.enabled==='true'||p.enabled===true)}} style={{flex:1,color:(p.enabled==='false'||p.enabled===false)?T.red:T.green}}>
+                    {(p.enabled==='false'||p.enabled===false)?'启用':'禁用'}
+                  </SmallBtn>
+                  <SmallBtn onClick={e=>{e.stopPropagation();setForm(p)}} style={{flex:1}}>编辑</SmallBtn>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {otherProviders.length>0&&(
+        <div>
+          <div onClick={()=>setShowOthers(!showOthers)} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',marginBottom:12,padding:'8px 0'}}>
+            <span style={{fontSize:11,color:T.text4,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em'}}>其他模型 ({otherProviders.length})</span>
+            <span style={{color:T.text4}}>{showOthers?'▼':'▶'}</span>
+          </div>
+          {showOthers&&(
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              {otherProviders.map(p=>(
+                <div key={p.name} onClick={()=>setDefault(p.name)}
+                  style={{background:T.bg2,border:`2px solid ${p.is_default==='true'||p.is_default===true?T.blue:T.border}`,borderRadius:8,padding:'12px 16px',display:'flex',alignItems:'center',gap:12,cursor:'pointer',transition:'all 0.2s'}}>
+                  <div style={{flex:1}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                      <strong style={{color:T.text1}}>{p.display_name}</strong>
+                      <Tag color={providerColor(p.provider_type)}>{p.provider_type}</Tag>
+                      {(p.is_default==='true'||p.is_default===true)&&<Tag color={T.green}>默认</Tag>}
+                      {(p.enabled==='false'||p.enabled===false)&&<Tag color={T.red}>已禁用</Tag>}
+                    </div>
+                    <div style={{fontSize:12,color:T.text4,marginTop:4}}>{p.model_id} · 上下文 {Math.round((parseInt(p.context_window)||0)/1000)}K</div>
+                  </div>
+                  <div style={{display:'flex',gap:8,flexShrink:0}}>
+                    <SmallBtn onClick={e=>{e.stopPropagation();testProvider(p.name)}} disabled={testing===p.name}>{testing===p.name?'测试中...':'测试'}</SmallBtn>
+                    <SmallBtn onClick={e=>{e.stopPropagation();toggleEnabled(p.name,p.enabled==='true'||p.enabled===true)}}>{(p.enabled==='true'||p.enabled===true)?'禁用':'启用'}</SmallBtn>
+                    <SmallBtn onClick={e=>{e.stopPropagation();setForm(p)}}>编辑</SmallBtn>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {form&&(
         <Modal title={form.id?'编辑模型':'添加模型'} onClose={()=>setForm(null)}>
           <LLMForm initial={form} providerTypes={TYPES} onSave={async(d)=>{
@@ -271,6 +427,7 @@ function LLMForm({initial,providerTypes,onSave}) {
 function SkillsTab() {
   const [skills,setSkills] = useState([]);
   const [form,setForm] = useState(null);
+  const [viewing,setViewing] = useState(null);
   const EXEC_TYPES = ['llm_prompt','builtin_fn','http_webhook','js_script'];
   const load = () => api('/skills').then(setSkills).catch(e=>window.__showToast?.(e.message));
   useEffect(()=>{load()},[]);
@@ -295,7 +452,10 @@ function SkillsTab() {
             {skills.map(s=>(
               <tr key={s.id} style={{borderBottom:`1px solid ${T.border}`}}>
                 <td style={{padding:'10px 14px'}}>
-                  <div style={{color:T.text1,fontWeight:500}}>{s.display_name}</div>
+                  <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                    <span style={{color:T.text1,fontWeight:500}}>{s.display_name}</span>
+                    {(s.is_builtin==='true'||s.is_builtin===true)&&<Tag color={T.amber}>内置</Tag>}
+                  </div>
                   <div style={{fontSize:11,color:T.text4}}>{(s.description||'').slice(0,50)}</div>
                 </td>
                 <td style={{padding:'10px 14px'}}><Tag color={T.purple}>{s.category}</Tag></td>
@@ -307,9 +467,13 @@ function SkillsTab() {
                 </td>
                 <td style={{padding:'10px 14px'}}>
                   <div style={{display:'flex',gap:6}}>
-                    <SmallBtn onClick={()=>setForm(s)} disabled={s.is_builtin==='true'||s.is_builtin===true}>编辑</SmallBtn>
-                    {!(s.is_builtin==='true'||s.is_builtin===true)&&(
-                      <SmallBtn style={{color:T.red}} onClick={async()=>{if(confirm('确认删除？')){await api(`/skills/${s.id}`,{method:'DELETE'});load()}}}>删除</SmallBtn>
+                    {(s.is_builtin==='true'||s.is_builtin===true)?(
+                      <SmallBtn onClick={()=>setViewing(s)}>查看</SmallBtn>
+                    ):(
+                      <>
+                        <SmallBtn onClick={()=>setForm(s)}>编辑</SmallBtn>
+                        <SmallBtn style={{color:T.red}} onClick={async()=>{if(confirm('确认删除？')){await api(`/skills/${s.id}`,{method:'DELETE'});load()}}}>删除</SmallBtn>
+                      </>
                     )}
                   </div>
                 </td>
@@ -327,6 +491,49 @@ function SkillsTab() {
           }}/>
         </Modal>
       )}
+      {viewing&&(
+        <Modal title={`查看 Skill：${viewing.display_name}`} onClose={()=>setViewing(null)} wide>
+          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+            <div style={{background:T.bg0,border:`1px solid ${T.amber}`,borderRadius:6,padding:'12px 16px',color:T.amber,fontSize:12}}>ℹ️ 这是内置 Skill，只读模式</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              <div>
+                <Label>名称</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.name}</div>
+              </div>
+              <div>
+                <Label>显示名称</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.display_name}</div>
+              </div>
+            </div>
+            <div>
+              <Label>描述</Label>
+              <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.description||'—'}</div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              <div>
+                <Label>执行方式</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.amber,fontFamily:'monospace'}}>{viewing.executor_type}</div>
+              </div>
+              <div>
+                <Label>首选 LLM</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.preferred_llm||'—'}</div>
+              </div>
+            </div>
+            {viewing.executor_type==='llm_prompt'&&(
+              <>
+                <div>
+                  <Label>System Prompt</Label>
+                  <textarea readOnly value={viewing.system_prompt||''} style={{width:'100%',background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:12,color:T.text2,fontFamily:'monospace',rows:4,resize:'vertical',minHeight:80}}/>
+                </div>
+                <div>
+                  <Label>User Prompt 模板</Label>
+                  <textarea readOnly value={viewing.user_prompt_template||''} style={{width:'100%',background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:12,color:T.text2,fontFamily:'monospace',rows:3,resize:'vertical',minHeight:60}}/>
+                </div>
+              </>
+            )}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -334,26 +541,28 @@ function SkillsTab() {
 function SkillForm({initial,executorTypes,onSave}) {
   const [d,setD] = useState({...initial});
   const f  = k => e => setD(p=>({...p,[k]:e.target.value}));
+  const isBuiltin = initial.is_builtin==='true'||initial.is_builtin===true;
   return (
     <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      {isBuiltin&&<div style={{background:T.bg0,border:`1px solid ${T.amber}`,borderRadius:6,padding:'12px 16px',color:T.amber,fontSize:12}}>⚠ 这是内置 Skill，不可删除，编辑功能有限</div>}
       <Row><Field label="名称(唯一)" value={d.name||''} onChange={f('name')} disabled={!!initial.id}/>
-           <Field label="显示名称" value={d.display_name||''} onChange={f('display_name')}/></Row>
-      <Field label="描述" value={d.description||''} onChange={f('description')}/>
-      <Row><SelectF label="执行方式" value={d.executor_type||'llm_prompt'} onChange={f('executor_type')} options={executorTypes}/>
-           <Field label="首选 LLM（可选）" value={d.preferred_llm||''} onChange={f('preferred_llm')} placeholder="如 claude-sonnet-4"/></Row>
+           <Field label="显示名称" value={d.display_name||''} onChange={f('display_name')} disabled={isBuiltin}/></Row>
+      <Field label="描述" value={d.description||''} onChange={f('description')} disabled={isBuiltin}/>
+      <Row><SelectF label="执行方式" value={d.executor_type||'llm_prompt'} onChange={f('executor_type')} options={executorTypes} disabled={isBuiltin}/>
+           <Field label="首选 LLM（可选）" value={d.preferred_llm||''} onChange={f('preferred_llm')} placeholder="如 claude-sonnet-4" disabled={isBuiltin}/></Row>
       {d.executor_type==='llm_prompt'&&<>
-        <Textarea label="System Prompt（支持 {{spec.title}} 等变量）" value={d.system_prompt||''} onChange={f('system_prompt')} rows={5}/>
-        <Textarea label="User Prompt 模板" value={d.user_prompt_template||''} onChange={f('user_prompt_template')} rows={4}/>
-        <Row><Field label="Max Tokens" value={d.max_tokens||4096} onChange={f('max_tokens')} type="number"/>
-             <Field label="Temperature" value={d.temperature||0.2} onChange={f('temperature')} type="number" step="0.05"/></Row>
+        <Textarea label="System Prompt（支持 {{spec.title}} 等变量）" value={d.system_prompt||''} onChange={f('system_prompt')} rows={5} disabled={isBuiltin}/>
+        <Textarea label="User Prompt 模板" value={d.user_prompt_template||''} onChange={f('user_prompt_template')} rows={4} disabled={isBuiltin}/>
+        <Row><Field label="Max Tokens" value={d.max_tokens||4096} onChange={f('max_tokens')} type="number" disabled={isBuiltin}/>
+             <Field label="Temperature" value={d.temperature||0.2} onChange={f('temperature')} type="number" step="0.05" disabled={isBuiltin}/></Row>
       </>}
-      {d.executor_type==='builtin_fn'&&<Field label="内置函数名（如 fileParser / staticAnalysis）" value={d.function_name||''} onChange={f('function_name')}/>}
+      {d.executor_type==='builtin_fn'&&<Field label="内置函数名（如 fileParser / staticAnalysis）" value={d.function_name||''} onChange={f('function_name')} disabled={true}/>}
       {d.executor_type==='http_webhook'&&<>
-        <Field label="Webhook URL" value={d.webhook_url||''} onChange={f('webhook_url')}/>
-        <Textarea label="Headers (JSON)" value={JSON.stringify(d.webhook_headers||{})} onChange={e=>{try{setD(p=>({...p,webhook_headers:JSON.parse(e.target.value)}))}catch{}}} rows={2}/>
+        <Field label="Webhook URL" value={d.webhook_url||''} onChange={f('webhook_url')} disabled={isBuiltin}/>
+        <Textarea label="Headers (JSON)" value={JSON.stringify(d.webhook_headers||{})} onChange={e=>{try{setD(p=>({...p,webhook_headers:JSON.parse(e.target.value)}))}catch{}}} rows={2} disabled={isBuiltin}/>
       </>}
-      {d.executor_type==='js_script'&&<Textarea label="JS 脚本" value={d.script_code||''} onChange={f('script_code')} rows={8} mono/>}
-      <div style={{display:'flex',justifyContent:'flex-end'}}><Btn onClick={()=>onSave(d)}>保存</Btn></div>
+      {d.executor_type==='js_script'&&<Textarea label="JS 脚本" value={d.script_code||''} onChange={f('script_code')} rows={8} mono disabled={isBuiltin}/>}
+      <div style={{display:'flex',justifyContent:'flex-end'}}><Btn onClick={()=>onSave(d)} style={isBuiltin?{opacity:0.5,cursor:'not-allowed'}:{}}>保存</Btn></div>
     </div>
   );
 }
@@ -362,6 +571,7 @@ function SkillForm({initial,executorTypes,onSave}) {
 function AgentsTab() {
   const [agents,setAgents] = useState([]);
   const [form,setForm] = useState(null);
+  const [viewing,setViewing] = useState(null);
   const [skills,setSkills] = useState([]);
   const load = () => api('/agents').then(setAgents).catch(e=>window.__showToast?.(e.message));
   useEffect(()=>{load();api('/skills').then(setSkills).catch(()=>{})},[]);
@@ -394,8 +604,11 @@ function AgentsTab() {
               <div style={{display:'flex',gap:8,marginLeft:16,alignItems:'center',flexShrink:0}}>
                 <Toggle on={a.enabled==='true'||a.enabled===true}
                   onToggle={async()=>{await api(`/agents/${a.id}/toggle`,{method:'PATCH'});load()}}/>
-                <SmallBtn onClick={()=>setForm({...a,skill_names:pgArr(a.skill_names)})}
-                  disabled={a.is_builtin==='true'||a.is_builtin===true}>编辑</SmallBtn>
+                {(a.is_builtin==='true'||a.is_builtin===true)?(
+                  <SmallBtn onClick={()=>setViewing(a)}>查看</SmallBtn>
+                ):(
+                  <SmallBtn onClick={()=>setForm({...a,skill_names:pgArr(a.skill_names)})}>编辑</SmallBtn>
+                )}
               </div>
             </div>
           </div>
@@ -410,6 +623,55 @@ function AgentsTab() {
           }}/>
         </Modal>
       )}
+      {viewing&&(
+        <Modal title={`查看 Agent：${viewing.display_name}`} onClose={()=>setViewing(null)} wide>
+          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+            <div style={{background:T.bg0,border:`1px solid ${T.amber}`,borderRadius:6,padding:'12px 16px',color:T.amber,fontSize:12}}>ℹ️ 这是内置 Agent，只读模式</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              <div>
+                <Label>名称</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.name}</div>
+              </div>
+              <div>
+                <Label>显示名称</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.display_name}</div>
+              </div>
+            </div>
+            <div>
+              <Label>描述</Label>
+              <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.description||'—'}</div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              <div>
+                <Label>领域</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.domain||'*'}</div>
+              </div>
+              <div>
+                <Label>首选 LLM</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.preferred_llm||'—'}</div>
+              </div>
+            </div>
+            <div>
+              <Label>Skill 列表</Label>
+              <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',display:'flex',flexWrap:'wrap',gap:6}}>
+                {pgArr(viewing.skill_names).length>0?(
+                  pgArr(viewing.skill_names).map(s=>(
+                    <Tag key={s} color={T.purple} style={{fontSize:11}}>{s}</Tag>
+                  ))
+                ):(
+                  <span style={{color:T.text4,fontSize:12}}>无</span>
+                )}
+              </div>
+            </div>
+            {viewing.system_prompt&&(
+              <div>
+                <Label>System Prompt</Label>
+                <textarea readOnly value={viewing.system_prompt} style={{width:'100%',background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:12,color:T.text2,fontFamily:'monospace',rows:3,resize:'vertical',minHeight:60}}/>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -418,24 +680,26 @@ function AgentForm({initial,availableSkills,onSave}) {
   const [d,setD] = useState({...initial,skill_names:initial.skill_names||[]});
   const f = k => e => setD(p=>({...p,[k]:e.target.value}));
   const toggleSkill = name => setD(p=>({...p,skill_names:p.skill_names.includes(name)?p.skill_names.filter(s=>s!==name):[...p.skill_names,name]}));
+  const isBuiltin = initial.is_builtin==='true'||initial.is_builtin===true;
   return (
     <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      {isBuiltin&&<div style={{background:T.bg0,border:`1px solid ${T.amber}`,borderRadius:6,padding:'12px 16px',color:T.amber,fontSize:12}}>⚠ 这是内置 Agent，不可删除，编辑功能有限</div>}
       <Row><Field label="名称(唯一)" value={d.name||''} onChange={f('name')} disabled={!!initial.id}/>
-           <Field label="显示名称" value={d.display_name||''} onChange={f('display_name')}/></Row>
-      <Field label="描述" value={d.description||''} onChange={f('description')}/>
-      <Row><Field label="领域 (* 或 game/customer-service/analytics/document)" value={d.domain||'*'} onChange={f('domain')}/>
-           <Field label="首选 LLM（可选）" value={d.preferred_llm||''} onChange={f('preferred_llm')}/></Row>
+           <Field label="显示名称" value={d.display_name||''} onChange={f('display_name')} disabled={isBuiltin}/></Row>
+      <Field label="描述" value={d.description||''} onChange={f('description')} disabled={isBuiltin}/>
+      <Row><Field label="领域 (* 或 game/customer-service/analytics/document)" value={d.domain||'*'} onChange={f('domain')} disabled={isBuiltin}/>
+           <Field label="首选 LLM（可选）" value={d.preferred_llm||''} onChange={f('preferred_llm')} disabled={isBuiltin}/></Row>
       <div>
         <Label>Skill 列表</Label>
-        <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6}}>
+        <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6,opacity:isBuiltin?0.6:1}}>
           {availableSkills.filter(s=>s.enabled==='true'||s.enabled===true).map(s=>(
-            <button key={s.name} onClick={()=>toggleSkill(s.name)} style={{padding:'4px 10px',borderRadius:4,fontSize:12,cursor:'pointer',background:d.skill_names.includes(s.name)?T.blueBg:T.bg0,border:`1px solid ${d.skill_names.includes(s.name)?T.blue:T.border}`,color:d.skill_names.includes(s.name)?T.blue:T.text4}}>{s.display_name}</button>
+            <button key={s.name} onClick={()=>!isBuiltin&&toggleSkill(s.name)} disabled={isBuiltin} style={{padding:'4px 10px',borderRadius:4,fontSize:12,cursor:isBuiltin?'not-allowed':'pointer',background:d.skill_names.includes(s.name)?T.blueBg:T.bg0,border:`1px solid ${d.skill_names.includes(s.name)?T.blue:T.border}`,color:d.skill_names.includes(s.name)?T.blue:T.text4}}>{s.display_name}</button>
           ))}
         </div>
         {d.skill_names.length>0&&<div style={{marginTop:8,fontSize:11,color:T.text4}}>顺序：{d.skill_names.join(' → ')}</div>}
       </div>
-      <Textarea label="System Prompt（可选）" value={d.system_prompt||''} onChange={e=>setD(p=>({...p,system_prompt:e.target.value}))} rows={4}/>
-      <div style={{display:'flex',justifyContent:'flex-end'}}><Btn onClick={()=>onSave(d)}>保存</Btn></div>
+      <Textarea label="System Prompt（可选）" value={d.system_prompt||''} onChange={e=>setD(p=>({...p,system_prompt:e.target.value}))} rows={4} disabled={isBuiltin}/>
+      <div style={{display:'flex',justifyContent:'flex-end'}}><Btn onClick={()=>onSave(d)} style={isBuiltin?{opacity:0.5,cursor:'not-allowed'}:{}}>保存</Btn></div>
     </div>
   );
 }
@@ -448,12 +712,27 @@ function KBTab() {
   const [search,setSearch] = useState('');
   const [form,setForm] = useState(null);
   const [viewing,setViewing] = useState(null);
+  const [importModal, setImportModal] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(()=>{
     const q = new URLSearchParams({page:String(page),limit:'20',...(search?{search}:{})});
     api(`/kb?${q}`).then(r=>{setEntries(r.items);setTotal(r.total)}).catch(e=>window.__showToast?.(e.message));
   },[page,search]);
   useEffect(()=>{load()},[load]);
+
+  const handleImportDir = async (dirPath) => {
+    setImporting(true);
+    try {
+      await api('/kb/import-dir', {method:'POST', body:JSON.stringify({dirPath})});
+      window.__showToast?.('目录已导入','ok');
+      setImportModal(false);
+      load();
+    } catch(e) {
+      window.__showToast?.(e.message,'error');
+    }
+    setImporting(false);
+  };
 
   return (
     <div>
@@ -463,6 +742,7 @@ function KBTab() {
           <input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}} placeholder="搜索标题/内容..."
             style={{background:T.bg2,border:`1px solid ${T.border}`,color:T.text2,padding:'6px 12px',borderRadius:6,fontSize:13,width:200}}/>
           <Btn onClick={()=>setForm({entry_type:'code',language:'go',quality_score:70})}>+ 添加条目</Btn>
+          <Btn onClick={()=>setImportModal(true)} style={{background:T.bg3,color:T.text2}}>📁 导入目录</Btn>
         </div>
       </div>
       <div style={{fontSize:12,color:T.text4,marginBottom:12}}>共 {total} 条</div>
@@ -506,6 +786,41 @@ function KBTab() {
           <pre style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:6,padding:16,fontSize:12,color:T.text2,overflow:'auto',maxHeight:400,whiteSpace:'pre-wrap',fontFamily:'monospace'}}>{viewing.content}</pre>
         </Modal>
       )}
+      {importModal&&(
+        <Modal title="从本地目录导入" onClose={()=>setImportModal(false)} wide>
+          <ImportDirForm onImport={handleImportDir} importing={importing}/>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ImportDirForm({onImport,importing}) {
+  const [dirPath, setDirPath] = useState('');
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:6,padding:'12px 16px',color:T.text3,fontSize:12}}>
+        📂 选择包含代码文件的本地目录。系统将自动扫描代码文件（.go/.ts/.py/.java/.csharp 等），提取为知识库条目。
+      </div>
+      <div>
+        <Label>目录路径（服务器可访问的绝对路径）</Label>
+        <input value={dirPath} onChange={e=>setDirPath(e.target.value)} placeholder="如 /code/my-project 或 ./knowledge-base/seed-code"
+          style={{width:'100%',background:T.bg0,border:`1px solid ${T.border}`,color:T.text2,padding:'8px 12px',borderRadius:6,fontSize:13,boxSizing:'border-box'}}/>
+        <div style={{fontSize:11,color:T.text4,marginTop:6}}>
+          提示：
+          <ul style={{margin:'4px 0 0 20px',paddingLeft:0}}>
+            <li>支持相对路径（相对于项目根目录）</li>
+            <li>自动识别代码文件和文档</li>
+            <li>质量分 ≥ 60 的条目才会被索引</li>
+          </ul>
+        </div>
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+        <SmallBtn onClick={()=>setDirPath('')} disabled={importing}>清除</SmallBtn>
+        <Btn onClick={()=>onImport(dirPath)} disabled={!dirPath||importing} style={{background:T.greenBg,color:T.green,borderColor:T.greenBorder}}>
+          {importing?'导入中...':'开始导入'}
+        </Btn>
+      </div>
     </div>
   );
 }
@@ -534,6 +849,8 @@ function PipelinesTab() {
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState({name:'',display_name:'',domain:'*',nodes:[]});
+  const [showHelp, setShowHelp] = useState(false);
+  const [viewing, setViewing] = useState(null);
 
   useEffect(() => { loadPipelines(); }, []);
 
@@ -589,10 +906,35 @@ function PipelinesTab() {
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
         <H1>流水线管理</H1>
-        <Btn onClick={()=>setFormOpen(!formOpen)}>
-          {formOpen ? '取消' : '➕ 新建流水线'}
-        </Btn>
+        <div style={{display:'flex',gap:8}}>
+          <SmallBtn onClick={()=>setShowHelp(!showHelp)} style={{color:T.blue}}>? 帮助</SmallBtn>
+          <Btn onClick={()=>setFormOpen(!formOpen)}>
+            {formOpen ? '取消' : '➕ 新建流水线'}
+          </Btn>
+        </div>
       </div>
+
+      {showHelp&&(
+        <Card title="流水线配置指南" style={{marginBottom:24,background:T.bg1}}>
+          <div style={{fontSize:12,color:T.text3,lineHeight:'1.6'}}>
+            <p style={{marginBottom:8}}><strong>什么是流水线？</strong> 流水线定义了代码生成的执行顺序，由多个 Agent 节点组成，每个节点可依赖前置节点。</p>
+            <p style={{marginBottom:8}}><strong>节点配置示例：</strong></p>
+            <pre style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:8,overflow:'auto',fontSize:11,fontFamily:'monospace',marginBottom:8}}>
+{`[
+  {"agentName":"spec-agent","dependsOn":[],"optional":false},
+  {"agentName":"code-gen-agent","dependsOn":["spec-agent"],"optional":false}
+]`}
+            </pre>
+            <p style={{marginBottom:8}}><strong>字段说明：</strong></p>
+            <ul style={{marginLeft:16,marginBottom:8}}>
+              <li>agentName: Agent 的唯一标识</li>
+              <li>dependsOn: 依赖的前置 Agent（数组）</li>
+              <li>optional: 该节点是否可选（跳过但不失败）</li>
+            </ul>
+            <p><strong>提示：</strong> 点击「🧪 测试」验证流水线配置的正确性。</p>
+          </div>
+        </Card>
+      )}
 
       {formOpen && (
         <Card title="新建流水线" style={{marginBottom:24}}>
@@ -639,23 +981,72 @@ function PipelinesTab() {
       ) : (
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(400px,1fr))',gap:12}}>
           {pipelines.map(p=>(
-            <Card key={p.id} title={p.display_name||p.name} style={{display:'flex',flexDirection:'column'}}>
+            <Card key={p.id} title={<div style={{display:'flex',alignItems:'center',gap:8}}>{p.display_name||p.name}{(p.is_default==='true'||p.is_default===true)&&<Tag color={T.green}>默认</Tag>}</div>} style={{display:'flex',flexDirection:'column'}}>
               <div style={{fontSize:12,color:T.text3,marginBottom:8}}>
                 <div>名称: <code style={{color:T.text2}}>{p.name}</code></div>
                 <div>域: <Tag color={T.blue}>{p.domain}</Tag></div>
                 <div>节点: <Tag color={p.nodes?.length?T.green:T.amber}>{p.nodes?.length||0} 个</Tag></div>
-                {p.is_default && <div style={{marginTop:4}}><Tag color={T.purple}>默认流水线</Tag></div>}
               </div>
               <div style={{fontSize:11,color:T.text3,marginBottom:12,maxHeight:100,overflow:'auto',background:T.bg1,padding:8,borderRadius:4,fontFamily:'monospace'}}>
                 {p.nodes?.map((n,i)=><div key={i}>• {n.agentName} {n.dependsOn?.length?`← ${n.dependsOn.join(',')}`:''}</div>)}
               </div>
               <div style={{display:'flex',gap:6,marginTop:'auto'}}>
+                <SmallBtn onClick={()=>setViewing(p)} style={{color:T.green,flex:1}}>👁️ 查看</SmallBtn>
                 <SmallBtn onClick={()=>testPipeline(p.id)} style={{color:T.blue,flex:1}}>🧪 测试</SmallBtn>
                 {!p.is_default && <SmallBtn onClick={()=>deletePipeline(p.id)} style={{color:T.red,flex:1}}>🗑️ 删除</SmallBtn>}
               </div>
             </Card>
           ))}
         </div>
+      )}
+
+      {viewing&&(
+        <Modal title={`查看流水线：${viewing.display_name||viewing.name}`} onClose={()=>setViewing(null)} wide>
+          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              <div>
+                <Label>名称</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2,fontFamily:'monospace'}}>{viewing.name}</div>
+              </div>
+              <div>
+                <Label>显示名称</Label>
+                <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.display_name}</div>
+              </div>
+            </div>
+            <div>
+              <Label>描述</Label>
+              <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:12,color:T.text3}}>{viewing.description||'—'}</div>
+            </div>
+            <div>
+              <Label>域 (Domain)</Label>
+              <div style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'8px 12px',fontSize:13,color:T.text2}}>{viewing.domain||'*'}</div>
+            </div>
+            <div>
+              <Label>节点配置 (JSON)</Label>
+              <pre style={{background:T.bg0,border:`1px solid ${T.border}`,borderRadius:4,padding:'12px',fontSize:11,color:T.amber,fontFamily:'monospace',overflow:'auto',maxHeight:300}}>
+                {JSON.stringify(viewing.nodes||[],null,2)}
+              </pre>
+            </div>
+            <div>
+              <Label>节点执行流程</Label>
+              <div style={{background:T.bg1,border:`1px solid ${T.border}`,borderRadius:4,padding:'12px',fontSize:11,color:T.text3,fontFamily:'monospace'}}>
+                {(viewing.nodes||[]).map((n,i)=>(
+                  <div key={i} style={{marginBottom:6,display:'flex',alignItems:'center'}}>
+                    <span style={{color:T.text2,fontWeight:500}}>步骤 {i+1}:</span>
+                    <span style={{marginLeft:8,color:T.blue}}>{n.agentName}</span>
+                    {n.dependsOn?.length>0&&<span style={{marginLeft:8,color:T.text4}}>← 依赖: {n.dependsOn.join(', ')}</span>}
+                    {n.optional&&<span style={{marginLeft:8,color:T.amber}}>（可选）</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {viewing.is_default==='true'||viewing.is_default===true?(
+              <div style={{background:T.greenBg,border:`1px solid ${T.greenBorder}`,borderRadius:6,padding:'12px 16px',color:T.green,fontSize:12}}>✅ 这是系统默认流水线</div>
+            ):(
+              <div style={{background:T.blueBg,border:`1px solid ${T.blueBorder}`,borderRadius:6,padding:'12px 16px',color:T.blue,fontSize:12}}>ℹ️ 这是自定义流水线</div>
+            )}
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -665,8 +1056,11 @@ function SettingsTab() {
   const [settings,setSettings] = useState([]);
   const [editing,setEditing] = useState(null);
   const [editVal,setEditVal] = useState('');
-  const load = () => api('/settings').then(setSettings).catch(e=>window.__showToast?.(e.message));
+  const load = () => api('/settings').then(d=>{setSettings(d);}).catch(e=>window.__showToast?.(e.message));
   useEffect(()=>{load()},[]);
+
+  const envEnabledSetting = settings.find(s => s.key === 'use_env_config');
+  const envEnabled = envEnabledSetting ? (envEnabledSetting.value === true || envEnabledSetting.value === 'true') : false;
 
   const save = async key => {
     let value = editVal;
@@ -675,7 +1069,17 @@ function SettingsTab() {
     setEditing(null);load();window.__showToast?.('已保存','ok');
   };
 
-  const byCategory = settings.reduce((acc,s)=>{
+  const toggleEnv = async () => {
+    try {
+      await api('/settings/use_env_config', {method:'PUT',body:JSON.stringify({value:!envEnabled})});
+      load();
+      window.__showToast?.('已保存','ok');
+    } catch(e) {
+      window.__showToast?.(e.message,'error');
+    }
+  };
+
+  const byCategory = settings.filter(s=>s.key!=='use_env_config').reduce((acc,s)=>{
     if(!acc[s.category])acc[s.category]=[];
     acc[s.category].push(s);
     return acc;
@@ -684,16 +1088,44 @@ function SettingsTab() {
   return (
     <div>
       <H1>系统设置</H1>
-      {settings.length===0&&<div style={{color:T.text3,padding:40,textAlign:'center',background:T.bg2,borderRadius:8,border:`1px solid ${T.border}`}}>暂无设置数据，请确认数据库已初始化（执行 infra/postgres/dynamic-config-schema.sql）</div>}
-      {Object.entries(byCategory).map(([cat,items])=>(
+
+      {/* 配置源总开关 */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:24}}>
+        <div onClick={()=>envEnabled&&toggleEnv()}
+          style={{background:T.bg2,border:`2px solid ${!envEnabled?T.blue:T.border}`,borderRadius:8,padding:'16px',cursor:'pointer',transition:'all 0.2s',opacity:!envEnabled?1:0.5}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+            <span style={{fontSize:14,color:T.text1,fontWeight:500}}>📄 后台管理配置</span>
+            {!envEnabled&&<Tag color={T.green}>当前</Tag>}
+          </div>
+          <div style={{fontSize:12,color:T.text4}}>从数据库读取系统设置（推荐用于生产）</div>
+        </div>
+        <div onClick={()=>!envEnabled&&toggleEnv()}
+          style={{background:T.bg2,border:`2px solid ${envEnabled?T.blue:T.border}`,borderRadius:8,padding:'16px',cursor:'pointer',transition:'all 0.2s',opacity:envEnabled?1:0.5}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+            <span style={{fontSize:14,color:T.text1,fontWeight:500}}>.env 文件配置</span>
+            {envEnabled&&<Tag color={T.green}>当前</Tag>}
+          </div>
+          <div style={{fontSize:12,color:T.text4}}>从 .env 文件读取配置（仅用于测试）</div>
+        </div>
+      </div>
+
+      {settings.length===0?<div style={{color:T.text3,padding:40,textAlign:'center',background:T.bg2,borderRadius:8,border:`1px solid ${T.border}`}}>暂无设置数据，请确认数据库已初始化（执行 infra/postgres/dynamic-config-schema.sql）</div>:
+      Object.entries(byCategory).map(([cat,items])=>(
         <Card key={cat} title={catLabel(cat)} style={{marginBottom:16}}>
-          {items.map(s=>(
+          {items.map(s=>{
+            const isBool = typeof s.value === 'boolean' || s.value === 'true' || s.value === 'false';
+            const boolVal = s.value === true || s.value === 'true';
+            return (
             <div key={s.key} style={{display:'flex',alignItems:'center',padding:'8px 0',borderBottom:`1px solid ${T.border}`}}>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,color:T.text1,fontFamily:'monospace'}}>{s.key}</div>
                 {s.description&&<div style={{fontSize:11,color:T.text4}}>{s.description}</div>}
               </div>
-              {editing===s.key?(
+              {isBool?(
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <Toggle on={boolVal} onToggle={async()=>{try{await api(`/settings/${s.key}`,{method:'PUT',body:JSON.stringify({value:!boolVal})});load();window.__showToast?.('已保存','ok')}catch(e){window.__showToast?.(e.message,'error')}}}/>
+                </div>
+              ):editing===s.key?(
                 <div style={{display:'flex',gap:6}}>
                   <input value={editVal} onChange={e=>setEditVal(e.target.value)}
                     style={{background:T.bg0,border:`1px solid ${T.border}`,color:T.text2,padding:'4px 8px',borderRadius:4,fontSize:12,width:180}}/>
@@ -707,7 +1139,8 @@ function SettingsTab() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </Card>
       ))}
     </div>

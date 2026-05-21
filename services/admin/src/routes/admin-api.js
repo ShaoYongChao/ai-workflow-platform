@@ -325,6 +325,176 @@ router.delete('/kb/:id', async (req, res) => {
   ok(res, { deleted: true })
 })
 
+// ── 从目录导入 ───────────────────────────────────────────────
+router.post('/kb/import-dir', async (req, res) => {
+  const { dirPath } = req.body
+  if (!dirPath) return fail(res, '缺少 dirPath')
+
+  try {
+    const path = require('path')
+    const fs = require('fs')
+    const realPath = path.resolve(process.cwd(), dirPath)
+
+    if (!fs.existsSync(realPath)) {
+      return fail(res, `目录不存在: ${dirPath}`)
+    }
+
+    const codeExtensions = ['.go', '.ts', '.tsx', '.js', '.jsx', '.py', '.java', '.cs', '.cpp', '.h', '.sql', '.md']
+    const entries = []
+    let imported = 0
+
+    const walkDir = (dir) => {
+      const files = fs.readdirSync(dir, { withFileTypes: true })
+      for (const file of files) {
+        if (file.name.startsWith('.')) continue
+        const fullPath = path.join(dir, file.name)
+        if (file.isDirectory()) {
+          walkDir(fullPath)
+        } else {
+          const ext = path.extname(file.name)
+          if (codeExtensions.includes(ext)) {
+            const content = fs.readFileSync(fullPath, 'utf8')
+            if (content.length > 100 && content.length < 50000) {
+              const symbols = extractSymbols(content, ext.slice(1))
+              const title = path.basename(fullPath)
+              const language = {
+                '.go': 'go',
+                '.ts': 'typescript',
+                '.tsx': 'typescript',
+                '.js': 'javascript',
+                '.jsx': 'javascript',
+                '.py': 'python',
+                '.java': 'java',
+                '.cs': 'csharp',
+                '.cpp': 'cpp',
+                '.h': 'cpp',
+                '.sql': 'sql',
+                '.md': 'markdown'
+              }[ext] || null
+
+              entries.push({
+                title,
+                content,
+                entry_type: ext === '.md' ? 'document' : 'code',
+                language,
+                file_path: path.relative(realPath, fullPath),
+                quality_score: 70,
+                symbols,
+                project_id: req.query.project_id || null,
+                source: 'import-dir'
+              })
+            }
+          }
+        }
+      }
+    }
+
+    walkDir(realPath)
+
+    if (entries.length === 0) {
+      return fail(res, '未找到可导入的代码文件')
+    }
+
+    for (const e of entries) {
+      try {
+        await pool.query(
+          `INSERT INTO kb_entries (title, content, entry_type, language, file_path, symbols, quality_score, project_id, source, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           ON CONFLICT (title, file_path) DO UPDATE SET content = $2, quality_score = $7`,
+          [e.title, e.content, e.entry_type, e.language, e.file_path,
+           JSON.stringify(e.symbols), e.quality_score, e.project_id, e.source,
+           req.headers['x-developer-id'] || 'admin']
+        )
+        imported++
+      } catch (err) {
+        console.error(`导入失败: ${e.title}`, err.message)
+      }
+    }
+
+    triggerKBReindex(req.query.project_id).catch(() => {})
+    await logAudit('kb_entries.import_dir', req, 'kb_entries', null, { dirPath, imported })
+    ok(res, { imported, total: entries.length })
+  } catch (err) {
+    fail(res, `导入失败: ${err.message}`)
+  }
+})
+
+// ── 流水线定义 CRUD ───────────────────────────────────────────
+router.get('/pipelines', async (req, res) => {
+  const r = await pool.query(
+    `SELECT * FROM pipeline_definitions
+     WHERE project_id IS NULL OR project_id = $1
+     ORDER BY is_default DESC, domain, name`,
+    [req.query.project_id || null]
+  )
+  ok(res, r.rows)
+})
+
+router.post('/pipelines', async (req, res) => {
+  const { name, display_name, domain, nodes, project_id } = req.body
+  if (!name || !nodes?.length) return fail(res, '缺少必填字段: name, nodes')
+  const r = await pool.query(
+    `INSERT INTO pipeline_definitions (name, display_name, domain, nodes, project_id, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [name, display_name || name, domain || '*', JSON.stringify(nodes), project_id || null,
+     req.headers['x-developer-id'] || 'admin']
+  )
+  await logAudit('pipeline.create', req, 'pipeline', r.rows[0].id, req.body)
+  ok(res, r.rows[0])
+})
+
+router.put('/pipelines/:id', async (req, res) => {
+  const fields = ['display_name','domain','nodes','enabled']
+  const sets = [], vals = []
+  let idx = 1
+  for (const f of fields) {
+    if (req.body[f] !== undefined) {
+      sets.push(`${f} = $${idx++}`)
+      vals.push(f === 'nodes' ? JSON.stringify(req.body[f]) : req.body[f])
+    }
+  }
+  if (sets.length === 0) return fail(res, '无有效字段')
+  vals.push(req.params.id)
+  const r = await pool.query(
+    `UPDATE pipeline_definitions SET ${sets.join(',')} WHERE id = $${idx} RETURNING *`, vals
+  )
+  if (r.rowCount === 0) return fail(res, '不存在', 404)
+  await logAudit('pipeline.update', req, 'pipeline', req.params.id, req.body)
+  ok(res, r.rows[0])
+})
+
+router.delete('/pipelines/:id', async (req, res) => {
+  const chk = await pool.query(`SELECT is_default FROM pipeline_definitions WHERE id = $1`, [req.params.id])
+  if (chk.rows[0]?.is_default) return fail(res, '不能删除默认流水线')
+  await pool.query(`DELETE FROM pipeline_definitions WHERE id = $1`, [req.params.id])
+  await logAudit('pipeline.delete', req, 'pipeline', req.params.id, {})
+  ok(res, { deleted: true })
+})
+
+router.post('/pipelines/:id/test', async (req, res) => {
+  const r = await pool.query(`SELECT nodes FROM pipeline_definitions WHERE id = $1`, [req.params.id])
+  if (r.rowCount === 0) return fail(res, '不存在', 404)
+  const nodes = r.rows[0].nodes || []
+  const validated = validatePipeline(nodes)
+  ok(res, { valid: validated.valid, errors: validated.errors || [] })
+})
+
+function validatePipeline(nodes) {
+  const errors = []
+  const names = new Set()
+  for (const n of nodes) {
+    if (!n.agentName) errors.push('节点缺少 agentName')
+    if (names.has(n.agentName)) errors.push(`重复节点: ${n.agentName}`)
+    names.add(n.agentName)
+    if (n.dependsOn?.length > 0) {
+      for (const dep of n.dependsOn) {
+        if (!names.has(dep)) errors.push(`依赖不存在: ${dep} → ${n.agentName}`)
+      }
+    }
+  }
+  return { valid: errors.length === 0, errors }
+}
+
 // ── 系统设置 ──────────────────────────────────────────────────
 router.get('/settings', async (req, res) => {
   const r = await pool.query(`SELECT * FROM system_settings ORDER BY category, key`)
@@ -334,6 +504,17 @@ router.get('/settings', async (req, res) => {
 router.put('/settings/:key', async (req, res) => {
   const { value, description } = req.body
   if (value === undefined) return fail(res, '缺少 value')
+
+  // 如果是 use_env_config，发送通知给各服务刷新配置
+  if (req.params.key === 'use_env_config') {
+    try {
+      const Redis = require('ioredis')
+      const redis = new Redis(process.env.REDIS_URL)
+      await redis.publish('config:refresh', JSON.stringify({ key: req.params.key, value }))
+      await redis.quit()
+    } catch { /* 非阻塞 */ }
+  }
+
   await pool.query(
     `INSERT INTO system_settings (key, value, description, updated_by)
      VALUES ($1,$2,$3,$4)

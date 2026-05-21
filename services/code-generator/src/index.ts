@@ -1,11 +1,13 @@
 import express, { Request, Response } from 'express'
 import { Pool } from 'pg'
 import { logger } from './utils/logger'
-import { initDB, initRedis, getPool } from './services/task-store'
+import { initDB, initRedis, getPool, getRedis } from './services/task-store'
 import { startConsumer, stopConsumer } from './consumers/spec-consumer'
 import { taskRouter } from './routes/tasks'
 import 'dotenv/config'
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const configManager = require('../../../shared/config-manager')
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { tenantMiddleware } = require('../../../gateway/tenant-middleware')
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -48,23 +50,29 @@ async function bootstrap() {
     initRedis()
     logger.info('✅ Redis 连接初始化')
 
-    // 2. 初始化 Agent 系统（Phase 4）
+    // 2. 初始化配置管理器
     const pool = getPool()
+    const redis = getRedis()
+    await configManager.init(pool, redis)
+    logger.info('✅ 配置管理器初始化')
+
+    // 3. 初始化 Agent 系统（Phase 4）
     const llmRouter = getLLMRouter(pool)
     const { registry, taskBus } = await initializeAgentSystem(pool, llmRouter)
     logger.info(`✅ Agent 系统初始化，${registry.list().length} 个内置 Agent`)
 
-    // 将全局注册表和任务总线存储到应用上下文（供消费者使用）
+    // 将全局注册表、任务总线和配置管理器存储到应用上下文（供消费者使用）
     app.locals.agentRegistry = registry
     app.locals.taskBus = taskBus
     app.locals.llmRouter = llmRouter
+    app.locals.configManager = configManager
 
-    // 3. 启动 HTTP（先起来，让健康检查可用）
+    // 4. 启动 HTTP（先起来，让健康检查可用）
     app.listen(PORT, () => {
       logger.info(`🚀 code-generator HTTP 服务启动，端口 ${PORT}`)
     })
 
-    // 4. 启动 Kafka 消费者（传入 app 上下文以获取初始化的 Agent 系统）
+    // 5. 启动 Kafka 消费者（传入 app 上下文以获取初始化的 Agent 系统）
     await startConsumer(app)
 
   } catch (err) {

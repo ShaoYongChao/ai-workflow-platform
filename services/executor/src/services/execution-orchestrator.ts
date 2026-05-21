@@ -26,12 +26,14 @@ let agentRegistry: any = null  // AgentRegistry
 let taskBus: any = null        // TaskBus
 let llmRouter: any = null      // LLMRouter
 let pool: any = null           // Database pool for pipeline loading (Phase 5.2)
+let configManager: any = null  // Config manager for centralized settings
 
-export function setAppContext(context: { registry: any; taskBus: any; llmRouter: any; pool?: any }) {
+export function setAppContext(context: { registry: any; taskBus: any; llmRouter: any; pool?: any; configManager?: any }) {
   agentRegistry = context.registry
   taskBus = context.taskBus
   llmRouter = context.llmRouter
   pool = context.pool  // Pipeline loading (Phase 5.2)
+  configManager = context.configManager  // Config manager
 }
 
 let MAX_FIX_ATTEMPTS = 3
@@ -150,7 +152,7 @@ async function autoFixWithAgent(
         maxRetries: 1,
         timeoutMs: 120000,
         temperature: 0.3,
-        model: process.env.DEFAULT_LLM_MODEL || 'claude-sonnet-4',
+        model: configManager ? configManager.get('default_llm') : (process.env.DEFAULT_LLM || 'claude-sonnet-4'),
         domain: { name: 'auto-fix', language: [], conventions: [instruction], outputFormat: 'code' }
       }
     }

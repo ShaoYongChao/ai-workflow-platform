@@ -16,6 +16,7 @@ let registry: any = null  // AgentRegistry
 let taskBus: any = null   // TaskBus
 let llmRouter: any = null // LLMRouter
 let pool: any = null      // Database pool for pipeline loading
+let configManager: any = null // Config manager for centralized settings
 
 // ── Topic 定义 ──────────────────────────────────────────────
 const TOPICS = {
@@ -31,6 +32,7 @@ export function setAppContext(express: Express) {
   taskBus = express.locals.taskBus
   llmRouter = express.locals.llmRouter
   pool = express.locals.pool  // Pipeline loading
+  configManager = express.locals.configManager  // Config manager
 }
 
 // ── 根据 Spec 语言确定领域配置 ────────────────────────────
@@ -196,7 +198,7 @@ export async function startConsumer(appContext?: Express) {
             maxRetries: 2,
             timeoutMs: 120000,
             temperature: 0.2,
-            model: process.env.DEFAULT_LLM_MODEL || 'claude-sonnet-4',
+            model: configManager ? configManager.get('default_llm') : (process.env.DEFAULT_LLM || 'claude-sonnet-4'),
             domain: domainConfig
           }
         }
