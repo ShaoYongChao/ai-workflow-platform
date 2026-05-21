@@ -313,8 +313,8 @@ BM25 检索         向量检索
 | PostgreSQL | WHERE project_id = $1（TenantDB 封装） | ✅ 已实现 |
 | Chroma | Collection 命名：`awp_{project_id}_kb`（retrieval.ts 已实现） | ✅ 已实现 |
 | Redis | Key 前缀：`awp:{project_id}:` | ✅ 已实现 |
-| Elasticsearch | Index 命名：`awp-kb-{project_id}` | ⚠️ 未启用（当前 BM25 走 kb.json 内存索引） |
-| Neo4j CE | Label 前缀隔离（Enterprise 版用独立 database） | ⚠️ 未实现 |
+| Elasticsearch | Index 命名：`awp-kb-{project_id}` | ✅ 已实现 |
+| Neo4j CE | Label 前缀隔离（Enterprise 版用独立 database） | ✅ 已实现 |
 
 **Chroma 多租户向量化：**
 ```bash
