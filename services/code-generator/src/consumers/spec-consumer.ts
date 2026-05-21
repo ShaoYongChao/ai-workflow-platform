@@ -1,13 +1,20 @@
 import { Kafka, Consumer, Producer, EachMessagePayload } from 'kafkajs'
 import Redis from 'ioredis'
+import { Express } from 'express'
 import { SpecSubmittedPayload, GenerationResult } from '../schemas/types'
-import { generateCode } from '../generators/code-engine'
 import { createTask, saveResult, saveFailureSample } from '../services/task-store'
 import { logger } from '../utils/logger'
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { DOMAIN_CONFIGS } = require('../../agents/registry/agent-registry')
 
 let consumer: Consumer
 let producer: Producer
 let wsPublisher: Redis
+let app: Express | null = null
+let registry: any = null  // AgentRegistry
+let taskBus: any = null   // TaskBus
+let llmRouter: any = null // LLMRouter
 
 // ── Topic 定义 ──────────────────────────────────────────────
 const TOPICS = {
@@ -16,8 +23,37 @@ const TOPICS = {
   CODE_FAILED: 'code.generation.failed'  // 生产：记录失败
 } as const
 
+// ── 初始化消费者引用（由 index.ts 调用）────────────────────
+export function setAppContext(express: Express) {
+  app = express
+  registry = express.locals.agentRegistry
+  taskBus = express.locals.taskBus
+  llmRouter = express.locals.llmRouter
+}
+
+// ── 根据 Spec 语言确定领域配置 ────────────────────────────
+function determineDomain(specLanguages?: string[]): { domainKey: string; config: typeof DOMAIN_CONFIGS[keyof typeof DOMAIN_CONFIGS] } {
+  const langs = (specLanguages || ['go', 'typescript']).sort()
+  const langSet = new Set(langs)
+
+  // 根据语言组合选择合适的领域
+  if (langSet.has('csharp')) {
+    return { domainKey: 'game-full', config: DOMAIN_CONFIGS['game-full'] }
+  }
+  if (langSet.has('python')) {
+    return { domainKey: 'customer-service', config: DOMAIN_CONFIGS['customer-service'] }
+  }
+  // 默认：Go + TypeScript 组合
+  return { domainKey: 'game-server', config: DOMAIN_CONFIGS['game-server'] }
+}
+
 // ── 初始化 ──────────────────────────────────────────────────
-export async function startConsumer() {
+export async function startConsumer(appContext?: Express) {
+  // 如果提供了 Express 应用，设置上下文
+  if (appContext) {
+    setAppContext(appContext)
+  }
+
   const brokers = (process.env.KAFKA_BROKERS || 'localhost:9092').split(',')
 
   const kafka = new Kafka({
@@ -97,8 +133,71 @@ export async function startConsumer() {
       }))
 
       try {
-        // 核心：调用生成引擎（携带 projectId 注入项目历史记忆）
-        const result = await generateCode(taskId, specId, spec, projectId)
+        // 核心：使用 Agent 流水线替代直接的 generateCode() 调用（Phase 4.1）
+        if (!registry || !taskBus) {
+          throw new Error('Agent system not initialized')
+        }
+
+        const { domainKey, config: domainConfig } = determineDomain(spec.languages)
+
+        // 构建 Agent 上下文
+        const agentContext: any = {
+          taskId,
+          specId,
+          projectId: projectId || 'default',
+          developerId: 'system',  // 从 Kafka 消息提取，暂使用默认值
+          spec: spec as any,
+          retrieval: {},  // SpecAnalysisAgent 会提供检索上下文
+          memory: {},     // MemoryInjectSkill 会填充
+          prevOutputs: {},
+          config: {
+            maxRetries: 2,
+            timeoutMs: 120000,
+            temperature: 0.2,
+            model: process.env.DEFAULT_LLM_MODEL || 'claude-sonnet-4',
+            domain: domainConfig
+          }
+        }
+
+        // 构建和执行流水线
+        const pipeline = registry.buildPipeline(domainKey, 'standard')
+        const pipelineStart = Date.now()
+
+        const pipelineResult = await taskBus.run({
+          id: taskId,
+          nodes: pipeline,
+          context: agentContext,
+          onProgress: (event: any) => {
+            logger.debug({ taskId, agentName: event.agentName, status: event.status }, '流水线进度')
+          }
+        })
+
+        // 转换流水线结果为 GenerationResult
+        const codegenOutput = pipelineResult.outputs['codegen-agent']
+        if (!codegenOutput) {
+          throw new Error('CodeGen Agent 未执行或未生成输出')
+        }
+
+        const result: GenerationResult = {
+          taskId,
+          specId,
+          spec,
+          files: codegenOutput.files || [],
+          status: pipelineResult.status === 'success' ? 'success' : 'failed',
+          error: codegenOutput.error,
+          durationMs: pipelineResult.totalDurationMs,
+          model: agentContext.config.model,
+          promptTokens: 0,    // 由各 Skill 累计
+          completionTokens: 0,
+          usedChunks: (codegenOutput.data?.usedChunks as any) || []
+        }
+
+        // 累计各 Agent 的 Token 使用
+        for (const agentOutput of Object.values(pipelineResult.outputs) as any[]) {
+          if ((agentOutput as any).metadata?.tokensUsed) {
+            // Token 统计暂不细分
+          }
+        }
 
         // 保存结果
         await saveResult(taskId, result)
@@ -106,7 +205,7 @@ export async function startConsumer() {
         if (result.status === 'success') {
           try { const m = require('../metrics'); m.generationTotal?.inc({ status: 'success' }); m.generationDuration?.observe((Date.now() - genStart) / 1000) } catch {}
           // 推送到执行层（executor 服务消费此 topic）
-          await publishCodeGenerated(taskId, result)
+          await publishCodeGenerated(taskId, result, projectId)
 
           // 推送 WebSocket 消息：代码生成成功
           await wsPublisher.publish('task:update', JSON.stringify({
@@ -154,7 +253,7 @@ export async function startConsumer() {
 }
 
 // ── 生产：通知 executor 执行测试 ────────────────────────────
-async function publishCodeGenerated(taskId: string, result: GenerationResult) {
+async function publishCodeGenerated(taskId: string, result: GenerationResult, projectId = 'default') {
   await producer.send({
     topic: TOPICS.CODE_GENERATED,
     messages: [{
@@ -165,6 +264,7 @@ async function publishCodeGenerated(taskId: string, result: GenerationResult) {
         specId: result.specId,
         spec: result.spec,
         files: result.files,
+        projectId,
         durationMs: result.durationMs,
         model: result.model,
         timestamp: Date.now()

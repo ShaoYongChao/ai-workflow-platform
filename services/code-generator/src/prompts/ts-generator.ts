@@ -58,7 +58,7 @@ ${JSON.stringify(spec, null, 2)}
 \`${featureName}Manager\`
 
 ## 关键要求
-- 对接后端 API：${spec.api_contract.map((a: { type: string; name: string }) => `${a.type} /${a.name}`).join('、')}
+- 对接后端 API：${spec.api_contract.map((a: any) => `${a.type} /${a.name}`).join('、')}
 - 涉及实体：${spec.entities.join('、')}
 - 业务规则需在客户端体现：
 ${Object.entries(spec.rules).map(([k, v]) => `  - ${k}: ${v}`).join('\n')}

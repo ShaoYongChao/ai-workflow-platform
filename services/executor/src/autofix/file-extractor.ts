@@ -9,12 +9,25 @@ export function extractFilesFromOutput(raw: string): GeneratedFile[] {
     const [, filePath, lang, content] = match
     files.push({
       path: filePath.trim(),
-      language: lang.toLowerCase().includes('go') ? 'go' : 'typescript',
+      language: normalizeLanguage(lang),
       content: content.trim(),
       role: inferRole(filePath.trim())
     })
   }
   return files
+}
+
+function normalizeLanguage(lang: string): 'go' | 'typescript' | 'csharp' | 'java' | 'python' {
+  const normalized = lang.toLowerCase()
+
+  if (normalized.includes('go')) return 'go'
+  if (normalized.includes('typescript') || normalized.includes('ts') || normalized.includes('javascript')) return 'typescript'
+  if (normalized.includes('csharp') || normalized.includes('c#') || normalized.includes('cs')) return 'csharp'
+  if (normalized.includes('java')) return 'java'
+  if (normalized.includes('python') || normalized.includes('py')) return 'python'
+
+  // 默认 typescript（向后兼容）
+  return 'typescript'
 }
 
 function inferRole(p: string): GeneratedFile['role'] {

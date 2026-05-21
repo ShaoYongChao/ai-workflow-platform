@@ -50,6 +50,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./infra/postgres/dynamic-config-schema.sql:/docker-entrypoint-initdb.d/02-dynamic-config.sql:ro
+      - ./infra/postgres/seed-skills-agents.sql:/docker-entrypoint-initdb.d/03-seed-skills-agents.sql:ro
     networks: [ai-workflow-net]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U awp -d ai_workflow"]

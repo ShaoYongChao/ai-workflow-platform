@@ -32,8 +32,16 @@ export function extractFilesFromLLMOutput(raw: string): GeneratedFile[] {
   return files
 }
 
-function normalizeLanguage(lang: string): 'go' | 'typescript' {
-  if (['go', 'golang'].includes(lang.toLowerCase())) return 'go'
+function normalizeLanguage(lang: string): 'go' | 'typescript' | 'csharp' | 'java' | 'python' {
+  const normalized = lang.toLowerCase()
+
+  if (['go', 'golang'].includes(normalized)) return 'go'
+  if (['typescript', 'ts', 'javascript', 'js'].includes(normalized)) return 'typescript'
+  if (['csharp', 'c#', 'cs'].includes(normalized)) return 'csharp'
+  if (['java'].includes(normalized)) return 'java'
+  if (['python', 'py'].includes(normalized)) return 'python'
+
+  // 默认 typescript（向后兼容）
   return 'typescript'
 }
 

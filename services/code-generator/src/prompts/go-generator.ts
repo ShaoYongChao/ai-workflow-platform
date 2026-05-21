@@ -68,7 +68,7 @@ ${JSON.stringify(spec, null, 2)}
 使用 snake_case，基于 title 生成，例如 "每日签到领奖" → \`daily_signin\`
 
 ## 关键要求
-- API 接口：${spec.api_contract.map((a: { type: string; name: string }) => `${a.type} /${a.name}`).join('、')}
+- API 接口：${spec.api_contract.map((a: any) => `${a.type} /${a.name}`).join('、')}
 - 涉及实体：${spec.entities.join('、')}
 - 业务规则：
 ${Object.entries(spec.rules).map(([k, v]) => `  - ${k}: ${v}`).join('\n')}

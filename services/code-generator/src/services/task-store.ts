@@ -15,6 +15,11 @@ export function initRedis() {
   redis.on('error', (err) => logger.error(err, 'Redis 连接错误'))
 }
 
+export function getPool(): Pool {
+  if (!pool) throw new Error('Database not initialized. Call initDB() first.')
+  return pool
+}
+
 // ── 创建任务记录 ────────────────────────────────────────────
 export async function createTask(specId: string, priority: string): Promise<string> {
   const res = await pool.query(

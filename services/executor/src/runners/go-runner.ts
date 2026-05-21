@@ -7,6 +7,26 @@ import { SANDBOX_TIMEOUT } from '../utils/sandbox'
 
 const execFileAsync = promisify(execFile)
 
+// ── 根据语言获取文件扩展名 ─────────────────────────────────────
+function getFileExtensionForLanguage(
+  lang: 'go' | 'typescript' | 'csharp' | 'java' | 'python'
+): string {
+  switch (lang) {
+    case 'go':
+      return '.go'
+    case 'typescript':
+      return '.ts'
+    case 'csharp':
+      return '.cs'
+    case 'java':
+      return '.java'
+    case 'python':
+      return '.py'
+    default:
+      return '.go'
+  }
+}
+
 // ── 运行 Go 测试 ─────────────────────────────────────────────
 export async function runGoTests(goDir: string, taskId: string): Promise<TestRunResult> {
   const start = Date.now()
@@ -163,7 +183,7 @@ function parseGoTestJSON(raw: string, durationMs: number): TestRunResult {
 // 通过检查代码结构来估算质量，不实际运行
 function staticAnalyzeFallback(
   dir: string,
-  language: 'go' | 'typescript',
+  language: 'go' | 'typescript' | 'csharp' | 'java' | 'python',
   start: number
 ): TestRunResult {
   const fs = require('fs')
@@ -178,7 +198,11 @@ function staticAnalyzeFallback(
       for (const f of fs.readdirSync(d)) {
         const full = path.join(d, f)
         if (fs.statSync(full).isDirectory()) { walk(full); continue }
-        if (!f.endsWith('.go') && !f.endsWith('.ts')) continue
+
+        // 根据语言选择文件扩展名
+        const ext = getFileExtensionForLanguage(language)
+        if (!f.endsWith(ext)) continue
+
         fileCount++
         const content: string = fs.readFileSync(full, 'utf8')
 
@@ -186,9 +210,18 @@ function staticAnalyzeFallback(
           if (!content.includes('package '))      issues.push(`${f}: 缺少 package 声明`)
           if (content.includes('panic('))         issues.push(`${f}: 包含 panic 调用`)
           if (content.match(/\berr\b.*=.*\n[^e]/)) issues.push(`${f}: 疑似忽略错误`)
-        } else {
+        } else if (language === 'typescript') {
           if (content.split(': any').length > 4) issues.push(`${f}: 过多 any 类型`)
           if (content.includes('console.log'))   issues.push(`${f}: 包含 console.log`)
+        } else if (language === 'csharp') {
+          if (!content.includes('namespace '))   issues.push(`${f}: 缺少 namespace 声明`)
+          if (content.includes('TODO'))          issues.push(`${f}: 包含待办注释`)
+        } else if (language === 'java') {
+          if (!content.includes('public class')) issues.push(`${f}: 缺少 public class 声明`)
+          if (content.includes('TODO'))          issues.push(`${f}: 包含待办注释`)
+        } else if (language === 'python') {
+          if (content.includes('print('))        issues.push(`${f}: 包含 print 调用`)
+          if (content.includes('TODO'))          issues.push(`${f}: 包含待办注释`)
         }
       }
     }

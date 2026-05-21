@@ -1,7 +1,7 @@
 // ── 上游：来自 code-generator 的 Kafka 消息 ─────────────────
 export interface GeneratedFile {
   path: string
-  language: 'go' | 'typescript'
+  language: 'go' | 'typescript' | 'csharp' | 'java' | 'python'
   content: string
   role: 'handler' | 'service' | 'model' | 'test' | 'types' | 'client'
 }
@@ -11,6 +11,7 @@ export interface CodeGeneratedPayload {
   specId: string
   spec: FeatureSpec
   files: GeneratedFile[]
+  projectId?: string
   durationMs: number
   model: string
   timestamp: number
@@ -20,6 +21,7 @@ export interface FeatureSpec {
   title: string
   goal: string
   platform: ('client' | 'server')[]
+  languages?: ('go' | 'typescript' | 'csharp' | 'java' | 'python')[]
   rules: Record<string, string>
   entities: string[]
   api_contract: Array<{ name: string; type: string }>
@@ -39,7 +41,7 @@ export interface TestCase {
 }
 
 export interface TestRunResult {
-  language: 'go' | 'typescript'
+  language: 'go' | 'typescript' | 'csharp' | 'java' | 'python'
   status: TestStatus
   totalTests: number
   passedTests: number

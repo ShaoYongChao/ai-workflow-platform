@@ -17,7 +17,7 @@ export async function publishSpecSubmitted(specId: string, spec: FeatureSpec, pr
   // 确保 languages 字段存在（向后兼容）
   const finalSpec = {
     ...spec,
-    languages: spec.languages || ['go', 'typescript']
+    languages: (spec as any).languages || ['go', 'typescript']
   }
 
   await producer.send({

@@ -7,7 +7,7 @@ import { logger } from '../utils/logger'
 interface KBChunk {
   id: string
   type: 'interface' | 'struct' | 'function_signature' | 'class_signature' | 'error_definition'
-  language: 'go' | 'typescript'
+  language: 'go' | 'typescript' | 'csharp' | 'java' | 'python'
   file: string
   package?: string
   content: string
@@ -78,6 +78,9 @@ export async function retrieveContext(spec: FeatureSpec, projectId?: string): Pr
   const allMatches  = dedupeAndRank([...symbolMatches, ...textMatches, ...vectorMatches])
   const goChunks    = allMatches.filter(c => c.language === 'go').slice(0, 8)
   const tsChunks    = allMatches.filter(c => c.language === 'typescript').slice(0, 6)
+  const csChunks    = allMatches.filter(c => c.language === 'csharp').slice(0, 4)
+  const javaChunks  = allMatches.filter(c => c.language === 'java').slice(0, 4)
+  const pyChunks    = allMatches.filter(c => c.language === 'python').slice(0, 4)
 
   // 5. Neo4j 图谱增强（获取真实调用链，防止 AI 幻觉）
   let graphCallChains: string[] = []
@@ -95,6 +98,9 @@ export async function retrieveContext(spec: FeatureSpec, projectId?: string): Pr
   logger.info({
     goChunks: goChunks.length,
     tsChunks: tsChunks.length,
+    csChunks: csChunks.length,
+    javaChunks: javaChunks.length,
+    pyChunks: pyChunks.length,
     totalMatched: allMatches.length,
     graphEnriched: graphCallChains.length > 0
   }, '检索完成')
@@ -255,7 +261,7 @@ function buildConventions(goChunks: KBChunk[], tsChunks: KBChunk[]): string[] {
 function buildQuerySymbols(spec: FeatureSpec): string[] {
   return [
     ...spec.entities,
-    ...spec.api_contract.map((a: { name: string; type: string }) => a.name),
+    ...spec.api_contract.map((a: any) => a.name),
     ...Object.keys(spec.rules)
   ]
 }

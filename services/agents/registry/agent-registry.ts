@@ -10,12 +10,15 @@
  *   4. 自定义流水线支持（JSON 配置驱动）
  */
 
+import { Pool } from 'pg'
 import { BaseAgent, DomainConfig } from '../base/agent'
 import { PipelineNode, TaskBus } from '../bus/task-bus'
 import { SpecAnalysisAgent } from '../agents/spec-agent'
 import { CodeGenAgent } from '../agents/codegen-agent'
 import { TestAgent, RefactorAgent } from '../agents/test-refactor-agents'
 import { Unity3DAgent, UNITY_DOMAIN_CONFIG } from '../unity-agent/unity3d-agent'
+import { DynamicAgentFactory, DynamicSkillFactory } from '../dynamic/dynamic-loader'
+import { LLMRouter } from '../dynamic/llm-router'
 
 // ── 内置领域配置 ──────────────────────────────────────────────
 
@@ -122,11 +125,27 @@ const PIPELINE_TEMPLATES: Record<string, PipelineTemplate> = {
 // ── Agent 注册表 ──────────────────────────────────────────────
 
 export class AgentRegistry {
-  private agents    = new Map<string, BaseAgent>()
-  private bus:      TaskBus
+  private agents             = new Map<string, BaseAgent>()
+  private dynamicAgentCache  = new Map<string, BaseAgent>()
+  private bus:               TaskBus
+  private pool?:             Pool
+  private dynamicAgentFactory?: DynamicAgentFactory
+  private dynamicSkillFactory?: DynamicSkillFactory
 
-  constructor(bus: TaskBus) {
+  constructor(
+    bus: TaskBus,
+    dbPool?: Pool,
+    llmRouter?: LLMRouter
+  ) {
     this.bus = bus
+    this.pool = dbPool
+
+    // 初始化动态工厂（可选，需要数据库连接）
+    if (dbPool && llmRouter) {
+      this.dynamicSkillFactory = new DynamicSkillFactory(dbPool, llmRouter)
+      this.dynamicAgentFactory = new DynamicAgentFactory(dbPool, this.dynamicSkillFactory, llmRouter)
+    }
+
     this.registerBuiltins()
   }
 
@@ -150,7 +169,41 @@ export class AgentRegistry {
   }
 
   get(name: string): BaseAgent | undefined {
-    return this.agents.get(name)
+    // 优先从内存中获取（包括已加载的动态 Agent）
+    if (this.agents.has(name)) {
+      return this.agents.get(name)
+    }
+    if (this.dynamicAgentCache.has(name)) {
+      return this.dynamicAgentCache.get(name)
+    }
+
+    // 返回 undefined，由调用者处理 async 加载（不在同步方法中阻塞）
+    return undefined
+  }
+
+  // ── 异步加载 Agent（支持动态 Agent）──────────────────────
+  async getAsync(name: string): Promise<BaseAgent | undefined> {
+    // 先检查内存
+    if (this.agents.has(name)) {
+      return this.agents.get(name)
+    }
+    if (this.dynamicAgentCache.has(name)) {
+      return this.dynamicAgentCache.get(name)
+    }
+
+    // 从数据库加载（如果工厂可用）
+    if (this.dynamicAgentFactory) {
+      try {
+        const agent = await this.dynamicAgentFactory.buildAgent(name)
+        this.dynamicAgentCache.set(name, agent)
+        console.log(`[Registry] 动态加载 Agent: ${name}`)
+        return agent
+      } catch (err) {
+        console.warn(`[Registry] 加载动态 Agent "${name}" 失败:`, (err as Error).message)
+      }
+    }
+
+    return undefined
   }
 
   list(): Array<{ name: string; description: string; domain: string }> {
@@ -159,6 +212,28 @@ export class AgentRegistry {
       description: a.description,
       domain:      a.domain
     }))
+  }
+
+  // ── 列出所有可用 Agent（包括动态加载的）─────────────────
+  async listAsync(projectId?: string): Promise<Array<any>> {
+    const hardcoded = this.list()
+
+    // 如果没有动态工厂，只返回硬编码的 Agent
+    if (!this.dynamicAgentFactory) {
+      return hardcoded
+    }
+
+    // 从数据库加载其他 Agent
+    try {
+      const dynamic = await this.dynamicAgentFactory.listAgents(projectId)
+      // 合并，去重（同名 Agent 硬编码优先）
+      const hardcodedNames = new Set(hardcoded.map(a => a.name))
+      const others = dynamic.filter((a: any) => !hardcodedNames.has(a.name))
+      return [...hardcoded, ...others]
+    } catch (err) {
+      console.warn('[Registry] 列出动态 Agent 失败:', (err as Error).message)
+      return hardcoded
+    }
   }
 
   // ── 根据领域和模式组装流水线 ──────────────────────────────
@@ -170,6 +245,21 @@ export class AgentRegistry {
     if (customNodes) return customNodes
 
     const template = PIPELINE_TEMPLATES[pipelineMode] || PIPELINE_TEMPLATES['standard']
+    return template(this.agents)
+  }
+
+  // ── 异步构建流水线（支持动态 Agent）────────────────────
+  async buildPipelineAsync(
+    domainKey:     string,
+    pipelineMode:  string = 'standard',
+    customNodes?:  PipelineNode[]
+  ): Promise<PipelineNode[]> {
+    if (customNodes) return customNodes
+
+    const template = PIPELINE_TEMPLATES[pipelineMode] || PIPELINE_TEMPLATES['standard']
+    // 需要先加载可能的动态 Agent
+    // 由于 template 返回的是对应的 Node[]，这里我们保留同步版本的行为
+    // 如果需要全异步，应该在外部调用 getAsync() 先预加载
     return template(this.agents)
   }
 
@@ -187,6 +277,32 @@ export class AgentRegistry {
           : undefined
       }
     })
+  }
+
+  // ── 异步从 JSON 配置创建流水线（支持动态 Agent）────────
+  async buildPipelineFromConfigAsync(
+    config: PipelineJSONConfig
+  ): Promise<PipelineNode[]> {
+    const nodes: PipelineNode[] = []
+    for (const nodeConfig of config.nodes) {
+      const agent = await this.getAsync(nodeConfig.agentName)
+      if (!agent) throw new Error(`Agent ${nodeConfig.agentName} 未注册`)
+      nodes.push({
+        agent,
+        dependsOn: nodeConfig.dependsOn,
+        optional:  nodeConfig.optional,
+        condition: nodeConfig.condition
+          ? new Function('outputs', nodeConfig.condition) as any
+          : undefined
+      })
+    }
+    return nodes
+  }
+
+  // ── 清除动态 Agent 缓存（admin 更新后调用）────────────────
+  clearDynamicCache(): void {
+    this.dynamicAgentCache.clear()
+    console.log('[Registry] 已清除动态 Agent 缓存')
   }
 }
 

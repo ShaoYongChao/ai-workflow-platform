@@ -54,7 +54,10 @@ function extractKeyLines(errorMsg: string): string {
 }
 
 // ── 提取编译错误 ────────────────────────────────────────────
-function extractCompileError(rawOutput: string, lang: 'go' | 'typescript'): string {
+function extractCompileError(
+  rawOutput: string,
+  lang: 'go' | 'typescript' | 'csharp' | 'java' | 'python'
+): string {
   if (!rawOutput) return ''
   const lines = rawOutput.split('\n')
 
@@ -62,11 +65,32 @@ function extractCompileError(rawOutput: string, lang: 'go' | 'typescript'): stri
     // Go 编译错误格式: ./file.go:12:5: undefined: xxx
     const errLines = lines.filter(l => l.match(/\.\/.+\.go:\d+:\d+:/))
     return errLines.slice(0, 6).join('\n')
-  } else {
+  } else if (lang === 'typescript') {
     // TS 错误
     const errLines = lines.filter(l =>
       l.includes('error TS') || l.includes('SyntaxError') ||
       l.includes('Cannot find') || l.match(/\.ts\(\d+,\d+\)/)
+    )
+    return errLines.slice(0, 6).join('\n')
+  } else if (lang === 'csharp') {
+    // C# 错误格式: error CS1234:
+    const errLines = lines.filter(l =>
+      l.match(/error CS\d+/) || l.includes('error:') ||
+      l.match(/\.cs\(\d+,\d+\)/)
+    )
+    return errLines.slice(0, 6).join('\n')
+  } else if (lang === 'java') {
+    // Java 错误格式: error: [location]
+    const errLines = lines.filter(l =>
+      l.includes('error:') || l.includes('Exception') ||
+      l.match(/\.java:\d+/)
+    )
+    return errLines.slice(0, 6).join('\n')
+  } else {
+    // Python 错误格式: Error: / File ... line
+    const errLines = lines.filter(l =>
+      l.includes('Error:') || l.includes('Traceback') ||
+      l.match(/File ".*", line \d+/) || l.includes('FAILED')
     )
     return errLines.slice(0, 6).join('\n')
   }

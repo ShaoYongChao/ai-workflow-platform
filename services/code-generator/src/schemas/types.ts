@@ -5,6 +5,7 @@ export const FeatureSpecSchema = z.object({
   title: z.string(),
   goal: z.string(),
   platform: z.array(z.enum(['client', 'server'])),
+  languages: z.array(z.enum(['go', 'typescript', 'csharp', 'java', 'python'])).optional(),
   rules: z.record(z.string()),
   entities: z.array(z.string()),
   api_contract: z.array(z.object({
@@ -28,7 +29,7 @@ export interface SpecSubmittedPayload {
 // ── 生成结果 ────────────────────────────────────────────────
 export interface GeneratedFile {
   path: string           // 相对路径，如 server/signin/handler.go
-  language: 'go' | 'typescript'
+  language: 'go' | 'typescript' | 'csharp' | 'java' | 'python'
   content: string
   role: 'handler' | 'service' | 'model' | 'test' | 'types' | 'client'
 }
@@ -51,7 +52,7 @@ export interface GenerationResult {
 export interface KBChunkMetadata {
   id: string
   type: string
-  language: 'go' | 'typescript'
+  language: 'go' | 'typescript' | 'csharp' | 'java' | 'python'
   file: string
   symbols: string[]
 }

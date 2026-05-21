@@ -48,26 +48,28 @@ export async function generateCode(
   logger.info({ taskId, interfaceCount: context.relatedInterfaces.length }, '检索上下文完成')
 
   // 2. 获取用户指定的生成语言（向后兼容）
-  const languages = spec.languages || ['go', 'typescript']
-  const validLanguages = ['go', 'typescript', 'csharp', 'java', 'python']
-  const selectedLanguages = languages.filter(lang => validLanguages.includes(lang as any))
+  const languages = (spec.languages as any) || ['go', 'typescript']
+  const validLanguages: Array<'go' | 'typescript' | 'csharp' | 'java' | 'python'> = ['go', 'typescript', 'csharp', 'java', 'python']
+  const selectedLanguages = languages.filter((lang: string) => validLanguages.includes(lang as any)) as Array<'go' | 'typescript' | 'csharp' | 'java' | 'python'>
   const finalLanguages = selectedLanguages.length > 0 ? selectedLanguages : ['go', 'typescript']
 
   // 3. 为每个选中的语言并发生成
+  const displayNames: Record<string, string> = {
+    'go': 'Go',
+    'typescript': 'TypeScript',
+    'csharp': 'C#',
+    'java': 'Java',
+    'python': 'Python'
+  }
+
   for (const lang of finalLanguages) {
-    const displayName = {
-      'go': 'Go',
-      'typescript': 'TypeScript',
-      'csharp': 'C#',
-      'java': 'Java',
-      'python': 'Python'
-    }[lang] || lang
+    const displayName = displayNames[lang] || lang
     await broadcastLog(taskId, `generating_${lang}`, { language: displayName, message: `正在生成 ${displayName} 代码...` })
   }
 
   const tasks: Promise<GeneratedFile[]>[] = []
   for (const lang of finalLanguages) {
-    tasks.push(generateWithRetry(lang as any, spec, context, taskId))
+    tasks.push(generateWithRetry(lang as 'go' | 'typescript' | 'csharp' | 'java' | 'python', spec, context, taskId))
   }
 
   const results = await Promise.allSettled(tasks)
@@ -282,13 +284,15 @@ ${attempt === 3 ? '\n[重试提示] 简化实现逻辑，只包含核心功能�
     temperature: attempt === 1 ? 0.2 : 0.1
   })
 
-  const files = extractFilesFromLLMOutput(response.content).map(f => ({
+  const rawFiles = extractFilesFromLLMOutput(response.content)
+  if (rawFiles.length === 0) {
+    throw new Error('C# 代码生成输出格式错误，未解析到任何文件')
+  }
+
+  const files: GeneratedFile[] = rawFiles.map(f => ({
     ...f,
     language: 'csharp' as const
   }))
-  if (files.length === 0) {
-    throw new Error('C# 代码生成输出格式错误，未解析到任何文件')
-  }
 
   logger.info({ fileCount: files.length, paths: files.map(f => f.path) }, 'C# 文件解析完成')
   return files
@@ -332,13 +336,15 @@ ${attempt === 3 ? '\n[重试提示] 简化类结构，减少继承层级。' : '
     temperature: attempt === 1 ? 0.2 : 0.1
   })
 
-  const files = extractFilesFromLLMOutput(response.content).map(f => ({
+  const rawFiles = extractFilesFromLLMOutput(response.content)
+  if (rawFiles.length === 0) {
+    throw new Error('Java 代码生成输出格式错误，未解析到任何文件')
+  }
+
+  const files: GeneratedFile[] = rawFiles.map(f => ({
     ...f,
     language: 'java' as const
   }))
-  if (files.length === 0) {
-    throw new Error('Java 代码生成输出格式错误，未解析到任何文件')
-  }
 
   logger.info({ fileCount: files.length, paths: files.map(f => f.path) }, 'Java 文件解析完成')
   return files
@@ -383,13 +389,15 @@ ${attempt === 3 ? '\n[重试提示] 使用标准库，减少外部依赖。' : '
     temperature: attempt === 1 ? 0.2 : 0.1
   })
 
-  const files = extractFilesFromLLMOutput(response.content).map(f => ({
+  const rawFiles = extractFilesFromLLMOutput(response.content)
+  if (rawFiles.length === 0) {
+    throw new Error('Python 代码生成输出格式错误，未解析到任何文件')
+  }
+
+  const files: GeneratedFile[] = rawFiles.map(f => ({
     ...f,
     language: 'python' as const
   }))
-  if (files.length === 0) {
-    throw new Error('Python 代码生成输出格式错误，未解析到任何文件')
-  }
 
   logger.info({ fileCount: files.length, paths: files.map(f => f.path) }, 'Python 文件解析完成')
   return files

@@ -282,11 +282,20 @@ route('PUT', /^\/api\/admin\/agents\/(?<id>[^/]+)$/, async (req, res, params) =>
 
 route('PATCH', /^\/api\/admin\/agents\/(?<id>[^/]+)\/toggle$/, async (req, res, params) => {
   const r = await pool.query(
-    `UPDATE agent_definitions SET enabled=NOT enabled WHERE id=$1 RETURNING id,name,enabled`, [params.id]
+    `UPDATE agent_definitions SET enabled=NOT enabled WHERE id=$1 AND is_builtin=false RETURNING id,name,enabled`, [params.id]
   )
-  if (!r.rows.length) return fail(res, '不存在', 404)
+  if (!r.rows.length) return fail(res, '不存在或内置 Agent 不可修改', 404)
   auditLog(`agent.toggle:${params.id}`, req)
   ok(res, r.rows[0])
+})
+
+route('DELETE', /^\/api\/admin\/agents\/(?<id>[^/]+)$/, async (req, res, params) => {
+  const r = await pool.query(
+    `UPDATE agent_definitions SET enabled=false WHERE id=$1 AND is_builtin=false RETURNING id`, [params.id]
+  )
+  if (!r.rows.length) return fail(res, '不存在或内置 Agent 不可删除', 404)
+  auditLog(`agent.delete:${params.id}`, req)
+  ok(res, { disabled: true })
 })
 
 // ── Knowledge Base ────────────────────────────────────────────
