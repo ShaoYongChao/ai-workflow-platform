@@ -1,7 +1,7 @@
 # AWP — AI Workflow Platform
 
 > **AI 驱动的全链路自动化研发工作流平台**
-> 从需求白话描述到生产代码，自动化率 >80%，支持游戏、客服、数据分析、公文处理等多领域。
+> 从需求白话描述到生产代码，自动化率 >80%~~，支持游戏、客服、数据分析、公文处理等多领域。~~
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue)](docker-compose.yml)
@@ -28,7 +28,7 @@ AI 越用越准
 
 **平台特性：**
 - 🎮 **游戏领域开箱即用**：Go 服务端 + TypeScript 客户端 + Unity3D C# 三端同步生成
-- 🔌 **多领域可扩展**：智能客服 / 数据分析师 / 公文处理，改配置不改代码
+~~- 🔌 **多领域可扩展**：智能客服 / 数据分析师 / 公文处理，改配置不改代码~~
 - 🤖 **多 Agent 协作**：Spec分析 → 代码生成 → 测试 → 重构，DAG 并发调度
 - 🧠 **记忆进化**：四层记忆系统（会话/长期/技能/用户），越用越精准
 - 🔧 **动态配置**：Skill/Agent/LLM/知识库全部数据库驱动，后台管理无需改代码
