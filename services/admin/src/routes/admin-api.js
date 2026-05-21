@@ -433,14 +433,19 @@ router.get('/pipelines', async (req, res) => {
 router.post('/pipelines', async (req, res) => {
   const { name, display_name, domain, nodes, project_id } = req.body
   if (!name || !nodes?.length) return fail(res, '缺少必填字段: name, nodes')
-  const r = await pool.query(
-    `INSERT INTO pipeline_definitions (name, display_name, domain, nodes, project_id, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [name, display_name || name, domain || '*', JSON.stringify(nodes), project_id || null,
-     req.headers['x-developer-id'] || 'admin']
-  )
-  await logAudit('pipeline.create', req, 'pipeline', r.rows[0].id, req.body)
-  ok(res, r.rows[0])
+  try {
+    const r = await pool.query(
+      `INSERT INTO pipeline_definitions (name, display_name, domain, nodes, project_id, created_by)
+       VALUES ($1,$2,$3,$4::JSONB,$5,$6) RETURNING *`,
+      [name, display_name || name, domain || '*', JSON.stringify(nodes), project_id || null,
+       req.headers['x-developer-id'] || 'admin']
+    )
+    await logAudit('pipeline.create', req, 'pipeline', r.rows[0].id, req.body)
+    ok(res, r.rows[0])
+  } catch(err) {
+    console.error('创建流水线失败:', err)
+    fail(res, '创建流水线失败: ' + err.message)
+  }
 })
 
 router.put('/pipelines/:id', async (req, res) => {

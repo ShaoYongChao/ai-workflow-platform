@@ -859,25 +859,25 @@ function PipelinesTab() {
       const data = await api('/pipelines');
       setPipelines(Array.isArray(data) ? data : []);
     } catch(e) {
-      window.showGlobalToast(e.message, 'error');
+      window.__showToast__(e.message, 'error');
     }
     setLoading(false);
   }
 
   async function createPipeline() {
-    if (!form.name) { window.showGlobalToast('缺少流水线名称', 'error'); return; }
+    if (!form.name) { window.__showToast__('缺少流水线名称', 'error'); return; }
     if (!form.nodes || form.nodes.length === 0) {
-      window.showGlobalToast('流水线必须至少包含一个节点', 'error');
+      window.__showToast__('流水线必须至少包含一个节点', 'error');
       return;
     }
     try {
       await api('/pipelines', {method:'POST',body:JSON.stringify(form)});
-      window.showGlobalToast('✅ 流水线已创建', 'ok');
+      window.__showToast__('✅ 流水线已创建', 'ok');
       setFormOpen(false);
       setForm({name:'',display_name:'',domain:'*',nodes:[]});
       loadPipelines();
     } catch(e) {
-      window.showGlobalToast(e.message, 'error');
+      window.__showToast__(e.message, 'error');
     }
   }
 
@@ -885,9 +885,9 @@ function PipelinesTab() {
     try {
       const result = await api(`/pipelines/${id}/test`, {method:'POST'});
       const msg = result.valid ? '✅ 流水线配置有效' : `❌ 验证失败: ${result.errors.join('; ')}`;
-      window.showGlobalToast(msg, result.valid ? 'ok' : 'error');
+      window.__showToast__(msg, result.valid ? 'ok' : 'error');
     } catch(e) {
-      window.showGlobalToast(e.message, 'error');
+      window.__showToast__(e.message, 'error');
     }
   }
 
@@ -895,10 +895,10 @@ function PipelinesTab() {
     if (!confirm('确认删除此流水线?')) return;
     try {
       await api(`/pipelines/${id}`, {method:'DELETE'});
-      window.showGlobalToast('✅ 流水线已删除', 'ok');
+      window.__showToast__('✅ 流水线已删除', 'ok');
       loadPipelines();
     } catch(e) {
-      window.showGlobalToast(e.message, 'error');
+      window.__showToast__(e.message, 'error');
     }
   }
 
