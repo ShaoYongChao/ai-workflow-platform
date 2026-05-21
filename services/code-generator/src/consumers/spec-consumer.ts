@@ -6,7 +6,7 @@ import { createTask, saveResult, saveFailureSample } from '../services/task-stor
 import { logger } from '../utils/logger'
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { DOMAIN_CONFIGS } = require('../../agents/registry/agent-registry')
+const { DOMAIN_CONFIGS } = require('../../../agents/registry/agent-registry')
 
 let consumer: Consumer
 let producer: Producer

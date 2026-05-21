@@ -2,7 +2,7 @@
   "name": "awp-agents",
   "version": "1.0.0",
   "description": "AWP 多 Agent 协作系统（BaseAgent / TaskBus / Skill / Registry）",
-  "main": "registry/agent-registry.js",
+  "main": "index.js",
   "scripts": {
     "build": "tsc",
     "dev": "ts-node-dev --respawn --transpile-only registry/agent-registry.ts"
