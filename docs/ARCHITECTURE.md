@@ -506,6 +506,300 @@ Kong 3.6 DB-less 模式，声明式配置文件 `infra/kong/kong.yml`。
 
 ---
 
+## 八-4、第三方库详解
+
+### 核心依赖
+
+| 库名 | 版本 | 作用 | 使用场景 | 替代方案 |
+|------|------|------|---------|---------|
+| **@anthropic-ai/sdk** | ^0.20.0 | Claude LLM API 调用 | code-generator, executor, spec-normalizer | openai SDK (GPT), google-generativeai (Gemini) |
+| **openai** | ^4.20.0 | OpenAI GPT 调用 + 流式输出支持 | LLMRouter 多模型支持 | 其他 LLM SDK |
+| **express** | ^4.18.2 | HTTP 框架（路由、中间件） | 所有 Node.js 服务的基础框架 | fastify, hapi, koa |
+| **kafkajs** | ^2.2.4 | Kafka 客户端（事件驱动） | 服务间异步通信（spec→code→test 流水线） | RabbitMQ, Redis Streams |
+| **pg** | ^8.11.3 | PostgreSQL 驱动 | 所有服务的数据库连接 | mysql, sqlite3, mongodb |
+| **ioredis** | ^5.3.2 | Redis 客户端（内存缓存、发布订阅） | LLM Router 60s 缓存、WebSocket 实时推送、Session 管理 | redis, node-redis |
+| **ws** | ^8.18.0 | WebSocket 服务器（双向通信） | spec-normalizer/executor 的实时推送、VS Code 插件订阅 | socket.io, Engine.IO |
+| **zod** | ^3.22.4 | 运行时 Schema 校验（类型安全） | Spec 完整度检查、Skill/Agent 配置验证 | joi, yup, io-ts |
+| **uuid** | ^9.0.0 | 唯一标识生成 | 任务 ID、请求 ID、项目 ID | crypto.randomUUID() (Node 15+) |
+| **pino** | ^8.16.0 | JSON 日志库（结构化日志） | 所有服务的日志输出（便于聚合分析） | winston, bunyan, pino-pretty |
+| **prom-client** | ^15.1.0 | Prometheus 指标库（性能监控） | /metrics 端点，懒加载（可选） | micrometer (Java), prometheus_client (Python) |
+| **dotenv** | ^16.3.1 | 环境变量加载 | 开发环境配置隔离 | 环境变量直接设置 |
+| **cors** | ^2.8.5 | CORS 中间件 | 跨域资源共享（前端调用后端） | 手写 CORS headers |
+| **helmet** | ^7.1.0 | HTTP 安全头中间件 | 防止 XSS/CSRF/点击劫持 | 无（手写较麻烦） |
+| **express-validator** | ^7.0.1 | 请求验证中间件 | HTTP 参数校验（POST/PUT 数据合法性） | joi, yup with express |
+| **xml2js** | ^0.6.2 | XML 解析和生成 | executor 解析 `go test -json` 的 XML/JSON 混合输出 | sax-js, xsd |
+
+### 前端依赖（admin-web）
+
+- **零依赖** —— 纯 HTML + 原生 JavaScript + Node.js 内置 `http` 模块
+- **server.js** —— 静态文件服务器 + 运行时配置注入
+
+### 前端依赖（planner-web）
+
+Next.js 14 App Router（部分依赖，查看具体 `frontend/planner-web/package.json`）
+
+### 开发依赖
+
+| 库名 | 作用 |
+|------|------|
+| **typescript** | TypeScript 编译器（类型检查） |
+| **ts-node-dev** | 开发时 TS 自动编译 + 热重载 |
+| **jest** | 单元测试框架 |
+| **ts-jest** | Jest + TypeScript 集成 |
+| **@types/\*** | 类型定义文件（ts-node 编译依赖） |
+
+---
+
+## 九、环境变量完整清单
+
+### 通用变量
+
+| 变量名 | 默认值 | 服务 | 说明 |
+|--------|--------|------|------|
+| `NODE_ENV` | development | all | 环境标识（development/production） |
+| `LOG_LEVEL` | info | all | 日志级别（debug/info/warn/error） |
+| `ADMIN_API_KEY` | awp_admin_2024 | admin, Kong | 管理 API 密钥（限制 /api/admin 访问） |
+| `OPENAI_API_KEY` | 无 | code-generator, executor | OpenAI API 密钥（可选，LLMRouter 用） |
+| `ANTHROPIC_API_KEY` | 无 | code-generator, executor | Claude API 密钥（推荐，LLMRouter 用） |
+
+### 服务特定变量
+
+| 变量名 | 默认值 | 服务 | 说明 |
+|--------|--------|------|------|
+| `SPEC_NORMALIZER_PORT` | 3001 | spec-normalizer | 需求标准化服务端口 |
+| `CODE_GENERATOR_PORT` | 3003 | code-generator | 代码生成服务端口 |
+| `EXECUTOR_PORT` | 3004 | executor | 执行服务端口 |
+| `ADMIN_PORT` | 3006 | admin | 管理 API 端口 |
+| `ADMIN_WEB_PORT` | 3007 | admin-web | 管理后台前端端口 |
+| `RETRIEVAL_PORT` | 3008 | retrieval | 检索服务端口（Phase 2，可选） |
+| `RETRIEVAL_SERVICE_URL` | 无 | code-generator | 外部检索服务 URL（若设置则使用外部服务） |
+| `ENABLE_VECTOR_SEARCH` | false | code-generator | 是否启用 Chroma 向量检索（需要 OPENAI_API_KEY） |
+| `KNOWLEDGE_BASE_DIR` | ./knowledge-base | code-generator | 知识库路径 |
+| `KB_QUALITY_THRESHOLD` | 60 | code-generator | 知识库索引的最低质量分数 |
+
+### 数据库变量
+
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `POSTGRES_HOST` | postgres | PostgreSQL 主机 |
+| `POSTGRES_PORT` | 5432 | PostgreSQL 端口 |
+| `POSTGRES_USER` | awp | PostgreSQL 用户 |
+| `POSTGRES_PASSWORD` | awp123 | PostgreSQL 密码 |
+| `POSTGRES_DB` | ai_workflow | 数据库名 |
+| `REDIS_URL` | redis://redis:6379 | Redis 连接字符串 |
+| `KAFKA_BROKERS` | kafka:9092 | Kafka broker 地址（逗号分隔） |
+| `NEO4J_URI` | bolt://neo4j:7687 | Neo4j Bolt 协议地址 |
+| `NEO4J_USER` | neo4j | Neo4j 用户 |
+| `NEO4J_PASSWORD` | password | Neo4j 密码 |
+| `CHROMA_HOST` | chroma | Chroma 主机 |
+| `CHROMA_PORT` | 8001 | Chroma 端口 |
+
+### LLM 配置变量
+
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `DEFAULT_LLM_PROVIDER` | anthropic | 默认 LLM（anthropic/openai/deepseek/...） |
+| `DEEPSEEK_API_KEY` | 无 | Deepseek API 密钥 |
+| `GEMINI_API_KEY` | 无 | Google Gemini API 密钥 |
+| `QWEN_API_KEY` | 无 | 阿里云通义千问 API 密钥 |
+| `ZHIPU_API_KEY` | 无 | 智谱 ChatGLM API 密钥 |
+| `AZURE_OPENAI_KEY` | 无 | Azure OpenAI API 密钥 |
+| `AZURE_OPENAI_ENDPOINT` | 无 | Azure OpenAI endpoint URL |
+| `OLLAMA_BASE_URL` | http://localhost:11434 | Ollama 本地模型地址 |
+
+### 特性开关
+
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `ENABLE_GRAPH_SCHEMA_CHECK` | false | 是否启用 Neo4j 图谱验证（可选，性能敏感） |
+| `ENABLE_KNOWLEDGE_BASE_CACHE` | true | 是否缓存知识库索引（推荐 true） |
+| `ENABLE_AUDIT_LOG` | true | 是否记录审计日志 |
+| `AUTO_FIX_MAX_RETRIES` | 3 | Auto-Fix 最大重试次数 |
+| `TASK_TIMEOUT_SECONDS` | 300 | 任务执行超时（秒） |
+| `LLM_ROUTER_CACHE_TTL` | 60 | LLM 路由器缓存时间（秒） |
+
+---
+
+## 九-1、网络拓扑和部署架构
+
+### 部署拓扑图
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      外部网络 / 内网                              │
+└─────────────────────────────────────────────────────────────────┘
+                    │
+        ┌───────────┴────────────┐
+        ▼                        ▼
+   浏览器 (3000)        VS Code 插件
+        │                        │
+        ├────────────┬───────────┘
+        │            │
+        ▼            ▼
+┌─────────────────────────────────┐
+│     Kong API Gateway (:8000)     │  ← 统一入口（CORS、限流、鉴权）
+├─────────────────────────────────┤
+│ 路由规则：                        │
+│ /api/spec-*      → :3001         │
+│ /ws/spec         → :3001 (WS)   │
+│ /api/code-*      → :3003         │
+│ /api/executor/*  → :3004         │
+│ /ws/tasks        → :3004 (WS)   │
+│ /api/admin/*     → :3006 (KEY)  │
+│ /admin/*         → :3007         │
+│ /                → :3000         │
+└─────────────────────────────────┘
+        │
+        ├─────────────────────────────┬──────────────┬───────────────┐
+        ▼                             ▼              ▼               ▼
+┌──────────────────┐  ┌─────────────────────┐ ┌───────────────┐ ┌──────────┐
+│ spec-normalizer  │  │ code-generator      │ │   executor    │ │  admin   │
+│   :3001 (WS)    │  │    :3003 (REST)     │ │ :3004 (WS)   │ │  :3006   │
+├──────────────────┤  ├─────────────────────┤ ├───────────────┤ ├──────────┤
+│ • Zod 校验       │  │ • Kafka 消费        │ │ • Docker 沙箱 │ │ • CRUD   │
+│ • WebSocket 对话 │  │ • LLM 生成多语言    │ │ • 测试执行    │ │   Skill  │
+│ • Kafka 生产     │  │ • 知识库检索        │ │ • Auto-Fix    │ │ • Agent  │
+│ • Redis 缓存     │  │ • 流水线执行        │ │ • 评分计算    │ │ • LLM    │
+└──────────────────┘  └─────────────────────┘ └───────────────┘ │ • 管道   │
+        │                    │                      │              │ • 用户   │
+        └────────┬───────────┴──────────┬──────────┘              └──────────┘
+                 │                      │
+        ┌────────▼──────┐      ┌────────▼──────┐
+        │   Kafka :9092 │      │ Redis :6379   │
+        │   (async msg) │      │  (cache/pub)  │
+        └───────────────┘      └───────────────┘
+                 │                      │
+    ┌────────────┴──────────┬───────────┴─────────┐
+    ▼                       ▼                     ▼
+┌─────────────┐   ┌──────────────────┐   ┌──────────────┐
+│ PostgreSQL  │   │    Chroma        │   │   Neo4j      │
+│   :5432     │   │  (向量库) :8001  │   │   :7687      │
+│             │   │                  │   │              │
+│ (10 业务表) │   │ (K-NN 检索)      │   │ (图谱增强)   │
+│ (4 记忆表)  │   │                  │   │              │
+│ (6 配置表)  │   │ (可选)           │   │ (可选)       │
+└─────────────┘   └──────────────────┘   └──────────────┘
+
+数据流向：
+spec.submitted (Kafka)
+    │
+    ├→ code-generator (消费)
+    │       ├→ 知识库检索 (BM25 + 向量)
+    │       ├→ LLM 生成代码
+    │       └→ Kafka: code.generated
+    │
+    ├→ executor (消费)
+    │       ├→ Docker 测试
+    │       ├→ 失败时触发 Auto-Fix
+    │       ├→ Redis Publish: task.completed
+    │       └→ Kafka: code.tested / code.manual_review
+    │
+    └→ VS Code 插件 (WebSocket 监听)
+           └→ 任务通知 + 代码预览
+```
+
+### 容器编排（docker-compose.yml）
+
+```yaml
+version: '3.9'
+services:
+  # 基础设施（5个）
+  postgres:      环境变量 POSTGRES_* 控制，初始化脚本 init.sql + dynamic-config-schema.sql
+  redis:         缓存 + 发布订阅 + Session 管理
+  kafka:         消息队列（3 Topics）
+  chroma:        向量数据库（可选，ENABLE_VECTOR_SEARCH=true）
+  neo4j:         图数据库（可选，ENABLE_GRAPH_SCHEMA_CHECK=true）
+  
+  # 业务服务（4个）
+  spec-normalizer:  需求标准化（WS）
+  code-generator:   代码生成（消费 Kafka）
+  executor:         执行和测试（消费 Kafka，WS）
+  admin:            管理 API（REST）
+  
+  # 中间件/网关
+  kong:          API 网关（入口）
+  kong-admin:    Kong 管理接口（仅开发）
+  
+  # 监控/工具
+  grafana:       仪表板可视化（:3005）
+  prometheus:    指标采集（:9090）
+  sonarqube:     代码质量（:9000，可选）
+  kafka-ui:      消息队列 UI（:8080）
+  elasticsearch: 日志/全文检索（:9200，可选）
+```
+
+---
+
+## 十、关键配置文件说明
+
+### docker-compose.yml
+
+**核心设计**：20 个容器，通过环境变量驱动配置，无需修改代码。
+
+```yaml
+# 环境变量注入示例
+spec-normalizer:
+  environment:
+    - PORT=3001
+    - KAFKA_BROKERS=kafka:9092
+    - POSTGRES_URL=postgresql://awp:awp123@postgres:5432/ai_workflow
+    - REDIS_URL=redis://redis:6379
+    - DEFAULT_LLM_PROVIDER=anthropic
+    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}  # 从 .env 读取
+```
+
+### infra/kong/kong.yml
+
+Kong DB-less 声明式配置（修改后需 `docker-compose restart kong`）：
+
+```yaml
+_format_version: "3.0"
+_transform: true
+
+services:              # 定义上游服务
+  - name: spec-normalizer
+    host: spec-normalizer
+    port: 3001
+
+routes:               # 定义路由规则
+  - name: spec-api
+    service: spec-normalizer
+    paths: ["/api/spec-normalizer"]
+    strip_path: true
+
+plugins:              # 全局插件
+  - name: cors
+  - name: rate-limiting
+    config: { minute: 300 }
+  - name: request-size-limiting
+    config: { size_limit: 10485760 }   # 10MB
+```
+
+### .env.example / docker-compose.yml 中的 environment
+
+所有环境变量的权威来源。部署时：
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入实际的 API 密钥
+docker-compose up
+```
+
+---
+
+## 十-1、服务间通信矩阵
+
+```
+                       ▼ Kafka      ▼ HTTP        ▼ WebSocket   ▼ 数据库
+spec-normalizer        [生产]       [调用 LLM]    [推送对话]     [W: specs]
+code-generator         [消费]       [调用 LLM]    —             [R: specs, W: tasks]
+executor               [消费]       [调用 LLM]    [推送测试结果] [R: tasks, W: scores]
+admin                  —            [REST API]    —             [CRUD config]
+VS Code 插件           —            [REST]       [监听 executor] —
+```
+
+---
+
 ## 九、性能基准
 
 > 基于 MacBook Pro M2 + Claude Sonnet 4 测试结果
